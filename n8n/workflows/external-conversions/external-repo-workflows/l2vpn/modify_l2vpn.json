@@ -1,0 +1,652 @@
+{
+  "name": "Modify L2VPN",
+  "nodes": [
+    {
+      "parameters": {},
+      "name": "When clicking \"Execute Workflow\"",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [820, 300],
+      "id": "trigger-modify-l2vpn"
+    },
+    {
+      "parameters": {
+        "content": "## L2VPN Service Modification Workflow\n\n**Purpose**: Modify existing Layer 2 VPN service configurations\n\n**Supported Modifications**:\n- Bandwidth upgrades/downgrades\n- MTU size changes\n- Service class adjustments\n- VLAN ID changes\n- Endpoint port changes\n- Service description updates\n\n**Constraints**:\n- Cannot change service type (VPWS/VPLS) after creation\n- Bandwidth changes require service interruption\n- VLAN changes may affect customer traffic\n\n**Process**:\n1. Retrieve existing L2VPN service configuration\n2. Validate proposed modifications\n3. Check resource availability for changes\n4. Apply changes to NetBox configuration\n5. Deploy configuration updates via LSO\n6. Update NRM service registration\n7. Validate service connectivity post-change\n\n**Environment Variables Used**:\n- `NETBOX_TOKEN`: NetBox API authentication\n- `NETBOX_URL`: NetBox instance URL\n- `LSO_URL`: LSO automation endpoint\n- `L2VPN_SERVICE_ID`: Service ID to modify\n- `MODIFICATION_TYPE`: Type of modification (bandwidth, mtu, vlan, etc.)\n- `NEW_VALUE`: New value for the modification"
+      },
+      "name": "Workflow Documentation",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [400, 80],
+      "id": "doc-modify-l2vpn"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "workflow_id",
+              "name": "workflow_id",
+              "type": "string",
+              "value": "={{ $runIndex }}_modify_l2vpn_{{ Date.now() }}"
+            },
+            {
+              "id": "workflow_type",
+              "name": "workflow_type",
+              "type": "string",
+              "value": "modify_workflow"
+            },
+            {
+              "id": "product_type",
+              "name": "product_type",
+              "type": "string",
+              "value": "L2VPN"
+            },
+            {
+              "id": "target",
+              "name": "target",
+              "type": "string",
+              "value": "MODIFY"
+            },
+            {
+              "id": "service_id",
+              "name": "service_id",
+              "type": "string",
+              "value": "={{ $env.L2VPN_SERVICE_ID || '1001' }}"
+            },
+            {
+              "id": "modification_type",
+              "name": "modification_type",
+              "type": "string",
+              "value": "={{ $env.MODIFICATION_TYPE || 'bandwidth' }}"
+            },
+            {
+              "id": "new_value",
+              "name": "new_value",
+              "type": "string",
+              "value": "={{ $env.NEW_VALUE || '10G' }}"
+            }
+          ]
+        }
+      },
+      "name": "Initialize Modification Variables",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3,
+      "position": [1040, 300],
+      "id": "init-modification-variables"
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $env.NETBOX_URL }}/api/ipam/services/",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "netBoxApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Token {{ $env.NETBOX_TOKEN }}"
+            }
+          ]
+        },
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "name__ic",
+              "value": "L2VPN"
+            },
+            {
+              "name": "custom_fields",
+              "value": "service_id:{{ $json.service_id }}"
+            }
+          ]
+        }
+      },
+      "name": "Get L2VPN Service Details",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [1260, 300],
+      "id": "get-l2vpn-service"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "leftValue": "",
+            "caseSensitive": true,
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "service-found",
+              "leftValue": "={{ $json.count }}",
+              "rightValue": 0,
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "name": "Service Found",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1480, 300],
+      "id": "check-service-found"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "error",
+              "name": "error",
+              "type": "string",
+              "value": "L2VPN service not found with ID: {{ $('Initialize Modification Variables').item(0).json.service_id }}"
+            }
+          ]
+        }
+      },
+      "name": "Service Not Found Error",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3,
+      "position": [1480, 400],
+      "id": "service-not-found-error"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Validate modification request\nconst modificationVars = $('Initialize Modification Variables').item(0).json;\nconst serviceData = $('Get L2VPN Service Details').item(0).json.results[0];\n\n// Current service configuration\nconst currentConfig = {\n  service_id: serviceData.custom_fields?.service_id || modificationVars.service_id,\n  service_name: serviceData.name,\n  bandwidth: serviceData.custom_fields?.bandwidth || '1G',\n  mtu: serviceData.custom_fields?.mtu || 1500,\n  service_class: serviceData.custom_fields?.service_class || 'bronze',\n  vlan_id: serviceData.custom_fields?.vlan_id || 200,\n  service_type: serviceData.custom_fields?.service_type || 'vpws',\n  status: serviceData.status?.value || 'active'\n};\n\n// Validate modification type and new value\nlet validationResults = {\n  valid: false,\n  modification_allowed: false,\n  requires_restart: false,\n  validation_errors: []\n};\n\nswitch (modificationVars.modification_type) {\n  case 'bandwidth':\n    const validBandwidths = ['1G', '10G', '100G', '1T'];\n    if (validBandwidths.includes(modificationVars.new_value)) {\n      validationResults.valid = true;\n      validationResults.modification_allowed = true;\n      validationResults.requires_restart = true;\n    } else {\n      validationResults.validation_errors.push('Invalid bandwidth value');\n    }\n    break;\n    \n  case 'mtu':\n    const newMtu = parseInt(modificationVars.new_value);\n    if (newMtu >= 1500 && newMtu <= 9000) {\n      validationResults.valid = true;\n      validationResults.modification_allowed = true;\n      validationResults.requires_restart = false;\n    } else {\n      validationResults.validation_errors.push('MTU must be between 1500 and 9000');\n    }\n    break;\n    \n  case 'service_class':\n    const validClasses = ['bronze', 'silver', 'gold'];\n    if (validClasses.includes(modificationVars.new_value)) {\n      validationResults.valid = true;\n      validationResults.modification_allowed = true;\n      validationResults.requires_restart = false;\n    } else {\n      validationResults.validation_errors.push('Invalid service class');\n    }\n    break;\n    \n  case 'vlan':\n    const newVlan = parseInt(modificationVars.new_value);\n    if (newVlan >= 100 && newVlan <= 4094) {\n      validationResults.valid = true;\n      validationResults.modification_allowed = true;\n      validationResults.requires_restart = true;\n    } else {\n      validationResults.validation_errors.push('VLAN ID must be between 100 and 4094');\n    }\n    break;\n    \n  default:\n    validationResults.validation_errors.push('Unsupported modification type');\n}\n\n// Check service status - can only modify active services\nif (currentConfig.status !== 'active') {\n  validationResults.validation_errors.push('Can only modify active services');\n  validationResults.modification_allowed = false;\n}\n\nif (!validationResults.valid || !validationResults.modification_allowed) {\n  throw new Error(`Validation failed: ${validationResults.validation_errors.join('; ')}`);\n}\n\n// Return validated modification plan\nreturn {\n  workflow_id: modificationVars.workflow_id,\n  service_id: currentConfig.service_id,\n  service_name: currentConfig.service_name,\n  current_config: currentConfig,\n  modification: {\n    type: modificationVars.modification_type,\n    old_value: currentConfig[modificationVars.modification_type],\n    new_value: modificationVars.new_value,\n    requires_restart: validationResults.requires_restart\n  },\n  validation_status: 'passed'\n};"
+      },
+      "name": "Validate Modification Request",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1700, 240],
+      "id": "validate-modification-request"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "leftValue": "",
+            "caseSensitive": true,
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "vlan-modification",
+              "leftValue": "={{ $json.modification.type }}",
+              "rightValue": "vlan",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "name": "Is VLAN Modification",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1920, 240],
+      "id": "check-vlan-modification"
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $env.NETBOX_URL }}/api/ipam/vlans/",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "netBoxApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Token {{ $env.NETBOX_TOKEN }}"
+            }
+          ]
+        },
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "vid",
+              "value": "={{ $('Validate Modification Request').item(0).json.modification.new_value }}"
+            }
+          ]
+        }
+      },
+      "name": "Check New VLAN Availability",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [2140, 180],
+      "id": "check-new-vlan"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "leftValue": "",
+            "caseSensitive": true,
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "new-vlan-available",
+              "leftValue": "={{ $json.count }}",
+              "rightValue": 0,
+              "operator": {
+                "type": "number",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "name": "New VLAN Available",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [2360, 180],
+      "id": "check-new-vlan-available"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.NETBOX_URL }}/api/ipam/vlans/",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "netBoxApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Token {{ $env.NETBOX_TOKEN }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\n  \"name\": \"{{ $('Validate Modification Request').item(0).json.service_name }}-NEW\",\n  \"vid\": {{ $('Validate Modification Request').item(0).json.modification.new_value }},\n  \"status\": \"active\",\n  \"description\": \"Modified VLAN for L2VPN service {{ $('Validate Modification Request').item(0).json.service_id }}\",\n  \"role\": 2\n}"
+      },
+      "name": "Create New VLAN",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [2580, 120],
+      "id": "create-new-vlan"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "vlan_error",
+              "name": "vlan_error",
+              "type": "string",
+              "value": "New VLAN ID {{ $('Validate Modification Request').item(0).json.modification.new_value }} is already in use"
+            }
+          ]
+        }
+      },
+      "name": "VLAN Conflict Error",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3,
+      "position": [2580, 240],
+      "id": "vlan-conflict-error"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Apply the modification to service configuration\nconst validationData = $input.all()[0].json;\nconst modType = validationData.modification.type;\nconst newValue = validationData.modification.new_value;\n\n// Build updated configuration\nlet updatedConfig = {\n  ...validationData.current_config\n};\n\n// Apply the specific modification\nswitch (modType) {\n  case 'bandwidth':\n    updatedConfig.bandwidth = newValue;\n    break;\n  case 'mtu':\n    updatedConfig.mtu = parseInt(newValue);\n    break;\n  case 'service_class':\n    updatedConfig.service_class = newValue;\n    break;\n  case 'vlan':\n    updatedConfig.vlan_id = parseInt(newValue);\n    break;\n}\n\n// Update service status to indicate modification in progress\nupdatedConfig.status = 'modifying';\nupdatedConfig.modified_at = new Date().toISOString();\nupdatedConfig.modification_type = modType;\n\nreturn {\n  workflow_id: validationData.workflow_id,\n  service_id: validationData.service_id,\n  service_name: validationData.service_name,\n  original_config: validationData.current_config,\n  updated_config: updatedConfig,\n  modification: validationData.modification\n};"
+      },
+      "name": "Apply Configuration Changes",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2140, 300],
+      "id": "apply-config-changes"
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "={{ $env.NETBOX_URL }}/api/ipam/services/{{ $('Get L2VPN Service Details').item(0).json.results[0].id }}/",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "netBoxApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Token {{ $env.NETBOX_TOKEN }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\n  \"custom_fields\": {\n    \"service_id\": \"{{ $json.service_id }}\",\n    \"bandwidth\": \"{{ $json.updated_config.bandwidth }}\",\n    \"mtu\": {{ $json.updated_config.mtu }},\n    \"service_class\": \"{{ $json.updated_config.service_class }}\",\n    \"vlan_id\": {{ $json.updated_config.vlan_id }},\n    \"service_type\": \"{{ $json.updated_config.service_type }}\",\n    \"modified_at\": \"{{ $json.updated_config.modified_at }}\",\n    \"modification_type\": \"{{ $json.updated_config.modification_type }}\"\n  },\n  \"status\": \"planned\"\n}"
+      },
+      "name": "Update NetBox Service",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [2800, 300],
+      "id": "update-netbox-service"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "leftValue": "",
+            "caseSensitive": true,
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "requires-restart",
+              "leftValue": "={{ $('Apply Configuration Changes').item(0).json.modification.requires_restart }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "name": "Requires Service Restart",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [3020, 300],
+      "id": "check-requires-restart"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.LSO_URL || 'http://localhost:8080' }}/api/playbooks/execute",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\n  \"playbook_name\": \"modify_l2vpn_restart.yaml\",\n  \"extra_vars\": {\n    \"service\": {{ JSON.stringify($('Apply Configuration Changes').item(0).json) }},\n    \"workflow_id\": \"{{ $('Apply Configuration Changes').item(0).json.workflow_id }}\",\n    \"requires_restart\": true\n  }\n}"
+      },
+      "name": "Deploy with Service Restart",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [3240, 240],
+      "id": "deploy-with-restart"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.LSO_URL || 'http://localhost:8080' }}/api/playbooks/execute",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\n  \"playbook_name\": \"modify_l2vpn_live.yaml\",\n  \"extra_vars\": {\n    \"service\": {{ JSON.stringify($('Apply Configuration Changes').item(0).json) }},\n    \"workflow_id\": \"{{ $('Apply Configuration Changes').item(0).json.workflow_id }}\",\n    \"requires_restart\": false\n  }\n}"
+      },
+      "name": "Deploy Live Changes",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [3240, 360],
+      "id": "deploy-live-changes"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "workflow_status",
+              "name": "workflow_status",
+              "type": "string",
+              "value": "completed"
+            },
+            {
+              "id": "message",
+              "name": "message",
+              "type": "string",
+              "value": "L2VPN service {{ $('Apply Configuration Changes').item(0).json.service_name }} modified successfully"
+            },
+            {
+              "id": "service_id",
+              "name": "service_id",
+              "type": "string",
+              "value": "={{ $('Apply Configuration Changes').item(0).json.service_id }}"
+            },
+            {
+              "id": "modification_type",
+              "name": "modification_type",
+              "type": "string",
+              "value": "={{ $('Apply Configuration Changes').item(0).json.modification.type }}"
+            },
+            {
+              "id": "old_value",
+              "name": "old_value",
+              "type": "string",
+              "value": "={{ $('Apply Configuration Changes').item(0).json.modification.old_value }}"
+            },
+            {
+              "id": "new_value",
+              "name": "new_value",
+              "type": "string",
+              "value": "={{ $('Apply Configuration Changes').item(0).json.modification.new_value }}"
+            },
+            {
+              "id": "required_restart",
+              "name": "required_restart",
+              "type": "boolean",
+              "value": "={{ $('Apply Configuration Changes').item(0).json.modification.requires_restart }}"
+            }
+          ]
+        }
+      },
+      "name": "Set Modification Success",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3,
+      "position": [3460, 300],
+      "id": "modification-success"
+    }
+  ],
+  "connections": {
+    "When clicking \"Execute Workflow\"": {
+      "main": [
+        [
+          {
+            "node": "Initialize Modification Variables",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Initialize Modification Variables": {
+      "main": [
+        [
+          {
+            "node": "Get L2VPN Service Details",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get L2VPN Service Details": {
+      "main": [
+        [
+          {
+            "node": "Service Found",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Service Found": {
+      "main": [
+        [
+          {
+            "node": "Validate Modification Request",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Service Not Found Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Modification Request": {
+      "main": [
+        [
+          {
+            "node": "Is VLAN Modification",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Apply Configuration Changes",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is VLAN Modification": {
+      "main": [
+        [
+          {
+            "node": "Check New VLAN Availability",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check New VLAN Availability": {
+      "main": [
+        [
+          {
+            "node": "New VLAN Available",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "New VLAN Available": {
+      "main": [
+        [
+          {
+            "node": "Create New VLAN",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "VLAN Conflict Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Apply Configuration Changes": {
+      "main": [
+        [
+          {
+            "node": "Update NetBox Service",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update NetBox Service": {
+      "main": [
+        [
+          {
+            "node": "Requires Service Restart",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Requires Service Restart": {
+      "main": [
+        [
+          {
+            "node": "Deploy with Service Restart",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Deploy Live Changes",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Deploy with Service Restart": {
+      "main": [
+        [
+          {
+            "node": "Set Modification Success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Deploy Live Changes": {
+      "main": [
+        [
+          {
+            "node": "Set Modification Success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": ["l2vpn", "modify", "network", "service", "netbox", "orchestrator"],
+  "triggerCount": 0,
+  "updatedAt": "2024-12-19T15:50:00.000Z",
+  "versionId": "1.0.0"
+}

@@ -1,0 +1,305 @@
+{
+  "name": "Multi-Tenant NetBox Router",
+  "active": false,
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "tenant-router",
+        "options": {}
+      },
+      "id": "tenant-webhook",
+      "name": "Multi-Tenant Router",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [200, 300],
+      "webhookId": "tenant-router"
+    },
+    {
+      "parameters": {
+        "values": {
+          "string": [
+            {
+              "name": "customer_id",
+              "value": "={{ $json.body.customer_id || $env.CUSTOMER_ID || 'default' }}"
+            },
+            {
+              "name": "target_service",
+              "value": "={{ $json.body.target || 'netbox' }}"
+            },
+            {
+              "name": "action",
+              "value": "={{ $json.body.action || 'route_request' }}"
+            },
+            {
+              "name": "request_id",
+              "value": "={{ $json.body.request_id || $workflow.id + '-' + $now }}"
+            }
+          ]
+        }
+      },
+      "id": "extract-routing-info",
+      "name": "Extract Routing Info",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 1,
+      "position": [400, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "check-customer",
+              "leftValue": "={{ $json.customer_id }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "isNotEmpty"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "validate-customer",
+      "name": "Validate Customer",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [600, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "route-to-netbox",
+              "leftValue": "={{ $json.target_service }}",
+              "rightValue": "netbox",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "check-target-service",
+      "name": "Route to Service",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [800, 200]
+    },
+    {
+      "parameters": {
+        "url": "={{ $env.NETBOX_URL || 'http://localhost:8000' }}/api/status/",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "httpHeaderAuth": {
+          "name": "Authorization",
+          "value": "Token {{ $env.NETBOX_TOKEN }}"
+        },
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "json"
+            }
+          }
+        }
+      },
+      "id": "route-to-netbox",
+      "name": "Route to NetBox",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1000, 100]
+    },
+    {
+      "parameters": {
+        "values": {
+          "string": [
+            {
+              "name": "status",
+              "value": "Request routed successfully ✅"
+            },
+            {
+              "name": "customer_id",
+              "value": "={{ $('Extract Routing Info').item.json.customer_id }}"
+            },
+            {
+              "name": "target_service",
+              "value": "NetBox"
+            },
+            {
+              "name": "service_version",
+              "value": "={{ $json.netbox_version }}"
+            },
+            {
+              "name": "request_id",
+              "value": "={{ $('Extract Routing Info').item.json.request_id }}"
+            },
+            {
+              "name": "routed_at",
+              "value": "={{ $now }}"
+            }
+          ]
+        }
+      },
+      "id": "netbox-success",
+      "name": "NetBox Route Success",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 1,
+      "position": [1200, 100]
+    },
+    {
+      "parameters": {
+        "values": {
+          "string": [
+            {
+              "name": "status",
+              "value": "Service not supported"
+            },
+            {
+              "name": "error",
+              "value": "Only NetBox routing is currently supported"
+            },
+            {
+              "name": "supported_services",
+              "value": "netbox"
+            },
+            {
+              "name": "request_id",
+              "value": "={{ $('Extract Routing Info').item.json.request_id }}"
+            }
+          ]
+        }
+      },
+      "id": "unsupported-service",
+      "name": "Unsupported Service",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 1,
+      "position": [1000, 300]
+    },
+    {
+      "parameters": {
+        "values": {
+          "string": [
+            {
+              "name": "status",
+              "value": "Invalid customer ID"
+            },
+            {
+              "name": "error",
+              "value": "Customer ID is required for multi-tenant routing"
+            },
+            {
+              "name": "request_id",
+              "value": "={{ $('Extract Routing Info').item.json.request_id }}"
+            }
+          ]
+        }
+      },
+      "id": "invalid-customer",
+      "name": "Invalid Customer",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 1,
+      "position": [800, 400]
+    }
+  ],
+  "connections": {
+    "Multi-Tenant Router": {
+      "main": [
+        [
+          {
+            "node": "Extract Routing Info",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Routing Info": {
+      "main": [
+        [
+          {
+            "node": "Validate Customer",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Customer": {
+      "main": [
+        [
+          {
+            "node": "Route to Service",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Invalid Customer",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Route to Service": {
+      "main": [
+        [
+          {
+            "node": "Route to NetBox",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Unsupported Service",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Route to NetBox": {
+      "main": [
+        [
+          {
+            "node": "NetBox Route Success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "responseMode": "responseNode",
+    "responseNode": "NetBox Route Success"
+  },
+  "staticData": null,
+  "tags": [
+    {
+      "createdAt": "2025-08-11T12:00:00.000Z",
+      "updatedAt": "2025-08-11T12:00:00.000Z",
+      "id": "multi-tenant",
+      "name": "routing"
+    }
+  ],
+  "triggerCount": 0,
+  "updatedAt": "2025-08-11T12:00:00.000Z",
+  "versionId": "1"
+}

@@ -1,0 +1,201 @@
+{
+  "name": "Task Orchestrator",
+  "nodes": [
+    {
+      "parameters": {},
+      "name": "When clicking \"Execute Workflow\"",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [820, 300],
+      "id": "trigger-task-orchestrator"
+    },
+    {
+      "parameters": {
+        "content": "## Task Orchestration Workflow\n\n**Purpose**: Orchestrate and coordinate complex network automation tasks\n\n**Task Categories**:\n1. **Sequential Tasks**\n   - Multi-step deployment procedures\n   - Ordered configuration updates\n   - Dependency-based installations\n\n2. **Parallel Tasks**\n   - Bulk device configurations\n   - Simultaneous service deployments\n   - Distributed monitoring setup\n\n3. **Conditional Tasks**\n   - Environment-specific deployments\n   - Feature flag-based operations\n   - Error-recovery procedures\n\n4. **Scheduled Tasks**\n   - Recurring maintenance operations\n   - Periodic health checks\n   - Automated reporting tasks\n\n**Orchestration Features**:\n- Task dependency management\n- Parallel execution control\n- Error handling and rollback\n- Progress monitoring and reporting\n- Resource allocation and queuing\n- Task result aggregation\n\n**Process Flow**:\n1. Parse task definition and dependencies\n2. Validate task prerequisites\n3. Schedule task execution based on dependencies\n4. Monitor task execution progress\n5. Handle errors and retry logic\n6. Aggregate and report task results\n7. Perform cleanup and resource deallocation\n\n**Environment Variables Used**:\n- `NETBOX_TOKEN`: NetBox API authentication\n- `NETBOX_URL`: NetBox instance URL\n- `TASK_DEFINITION`: JSON task specification\n- `MAX_PARALLEL_TASKS`: Maximum parallel execution\n- `TASK_TIMEOUT`: Task execution timeout\n- `RETRY_COUNT`: Maximum retry attempts"
+      },
+      "name": "Workflow Documentation",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [400, 80],
+      "id": "doc-task-orchestrator"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "workflow_id",
+              "name": "workflow_id",
+              "type": "string",
+              "value": "={{ $runIndex }}_task_orchestrator_{{ Date.now() }}"
+            },
+            {
+              "id": "workflow_type",
+              "name": "workflow_type",
+              "type": "string",
+              "value": "task_orchestrator"
+            },
+            {
+              "id": "max_parallel_tasks",
+              "name": "max_parallel_tasks",
+              "type": "number",
+              "value": "={{ parseInt($env.MAX_PARALLEL_TASKS) || 5 }}"
+            },
+            {
+              "id": "task_timeout",
+              "name": "task_timeout",
+              "type": "number",
+              "value": "={{ parseInt($env.TASK_TIMEOUT) || 300 }}"
+            },
+            {
+              "id": "retry_count",
+              "name": "retry_count",
+              "type": "number",
+              "value": "={{ parseInt($env.RETRY_COUNT) || 3 }}"
+            }
+          ]
+        }
+      },
+      "name": "Initialize Task Variables",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3,
+      "position": [1040, 300],
+      "id": "init-task-variables"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Parse task definition and create execution plan\nconst taskVars = $input.all()[0].json;\n\n// Example task definition (in real scenario, would be from environment variable)\nconst taskDefinition = {\n  orchestration_id: taskVars.workflow_id,\n  name: 'Network Infrastructure Deployment',\n  description: 'Deploy complete network infrastructure for new site',\n  tasks: [\n    {\n      task_id: 'task-001',\n      name: 'Create Site in NetBox',\n      type: 'netbox_operation',\n      dependencies: [],\n      parameters: {\n        operation: 'create_site',\n        site_name: 'Branch Office 001',\n        site_slug: 'branch-001',\n        region: 'north-america',\n        tenant: 'corporate'\n      },\n      timeout: 60,\n      retry_count: 3\n    },\n    {\n      task_id: 'task-002',\n      name: 'Import Device Types',\n      type: 'import_operation',\n      dependencies: [],\n      parameters: {\n        import_source: 'cisco',\n        device_models: ['catalyst-9300', 'asr1001-x']\n      },\n      timeout: 120,\n      retry_count: 2\n    },\n    {\n      task_id: 'task-003',\n      name: 'Create Network Devices',\n      type: 'device_operation',\n      dependencies: ['task-001', 'task-002'],\n      parameters: {\n        devices: [\n          { name: 'switch-branch-001', device_type: 'catalyst-9300', site: 'branch-001' },\n          { name: 'router-branch-001', device_type: 'asr1001-x', site: 'branch-001' }\n        ]\n      },\n      timeout: 180,\n      retry_count: 3\n    },\n    {\n      task_id: 'task-004',\n      name: 'Configure Customer Ports',\n      type: 'port_operation',\n      dependencies: ['task-003'],\n      parameters: {\n        port_configs: [\n          { device: 'switch-branch-001', port: 'GigabitEthernet1/0/1', customer: 'customer-001' },\n          { device: 'switch-branch-001', port: 'GigabitEthernet1/0/2', customer: 'customer-002' }\n        ]\n      },\n      timeout: 120,\n      retry_count: 2\n    },\n    {\n      task_id: 'task-005',\n      name: 'Create L2VPN Services',\n      type: 'service_operation',\n      dependencies: ['task-004'],\n      parameters: {\n        services: [\n          { type: 'l2vpn', customer: 'customer-001', endpoints: ['branch-001-port1', 'dc-primary-port1'] },\n          { type: 'l2vpn', customer: 'customer-002', endpoints: ['branch-001-port2', 'dc-primary-port2'] }\n        ]\n      },\n      timeout: 240,\n      retry_count: 3\n    },\n    {\n      task_id: 'task-006',\n      name: 'Validate Deployment',\n      type: 'validation_operation',\n      dependencies: ['task-005'],\n      parameters: {\n        validation_tests: ['connectivity', 'performance', 'security'],\n        validation_level: 'comprehensive'\n      },\n      timeout: 300,\n      retry_count: 1\n    }\n  ],\n  execution_config: {\n    max_parallel_tasks: taskVars.max_parallel_tasks,\n    global_timeout: 1800, // 30 minutes\n    fail_fast: false,\n    cleanup_on_failure: true\n  }\n};\n\n// Build task execution plan\nconst executionPlan = {\n  total_tasks: taskDefinition.tasks.length,\n  execution_phases: [],\n  task_graph: {},\n  ready_tasks: [],\n  pending_tasks: [],\n  completed_tasks: [],\n  failed_tasks: []\n};\n\n// Build dependency graph\ntaskDefinition.tasks.forEach(task => {\n  executionPlan.task_graph[task.task_id] = {\n    ...task,\n    status: 'pending',\n    dependencies_met: task.dependencies.length === 0,\n    start_time: null,\n    end_time: null,\n    result: null,\n    retry_attempts: 0\n  };\n  \n  if (task.dependencies.length === 0) {\n    executionPlan.ready_tasks.push(task.task_id);\n  } else {\n    executionPlan.pending_tasks.push(task.task_id);\n  }\n});\n\n// Organize tasks into execution phases\nlet currentPhase = 0;\nlet remainingTasks = [...taskDefinition.tasks];\n\nwhile (remainingTasks.length > 0) {\n  const phaseTaskIds = [];\n  \n  // Find tasks with no unresolved dependencies\n  remainingTasks.forEach(task => {\n    const unresolvedDeps = task.dependencies.filter(dep => \n      !executionPlan.completed_tasks.includes(dep)\n    );\n    \n    if (unresolvedDeps.length === 0) {\n      phaseTaskIds.push(task.task_id);\n    }\n  });\n  \n  if (phaseTaskIds.length === 0) {\n    // Circular dependency detected\n    break;\n  }\n  \n  executionPlan.execution_phases.push({\n    phase: currentPhase,\n    tasks: phaseTaskIds,\n    can_run_parallel: true\n  });\n  \n  // Mark these tasks as completed for dependency resolution\n  executionPlan.completed_tasks.push(...phaseTaskIds);\n  \n  // Remove from remaining tasks\n  remainingTasks = remainingTasks.filter(task => !phaseTaskIds.includes(task.task_id));\n  currentPhase++;\n}\n\n// Reset completed tasks list for actual execution\nexecutionPlan.completed_tasks = [];\n\nreturn {\n  ...taskVars,\n  task_definition: taskDefinition,\n  execution_plan: executionPlan,\n  orchestration_status: 'initialized'\n};"
+      },
+      "name": "Parse Task Definition",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1260, 300],
+      "id": "parse-task-definition"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Simulate task execution orchestration\nconst orchestrationData = $input.all()[0].json;\nconst executionPlan = orchestrationData.execution_plan;\nconst taskGraph = executionPlan.task_graph;\n\n// Simulate execution results for each phase\nconst executionResults = {\n  orchestration_id: orchestrationData.workflow_id,\n  total_phases: executionPlan.execution_phases.length,\n  execution_summary: {\n    total_tasks: executionPlan.total_tasks,\n    completed_successfully: 0,\n    failed: 0,\n    skipped: 0,\n    total_execution_time: 0\n  },\n  phase_results: [],\n  task_results: {},\n  overall_status: 'completed'\n};\n\n// Simulate execution for each phase\nexecutionPlan.execution_phases.forEach((phase, phaseIndex) => {\n  const phaseStartTime = Date.now();\n  const phaseResult = {\n    phase: phase.phase,\n    tasks: phase.tasks,\n    phase_status: 'completed',\n    phase_duration: 0,\n    tasks_completed: 0,\n    tasks_failed: 0\n  };\n  \n  // Simulate task execution within the phase\n  phase.tasks.forEach(taskId => {\n    const task = taskGraph[taskId];\n    const taskStartTime = Date.now();\n    \n    // Simulate task execution (90% success rate)\n    const taskSuccess = Math.random() > 0.1;\n    const taskDuration = Math.floor(Math.random() * 60) + 30; // 30-90 seconds\n    \n    if (taskSuccess) {\n      executionResults.task_results[taskId] = {\n        task_id: taskId,\n        name: task.name,\n        status: 'completed',\n        start_time: new Date(taskStartTime).toISOString(),\n        end_time: new Date(taskStartTime + taskDuration * 1000).toISOString(),\n        duration_seconds: taskDuration,\n        retry_attempts: 0,\n        result: {\n          success: true,\n          message: `Task ${task.name} completed successfully`,\n          data: {\n            operation_type: task.type,\n            parameters: task.parameters\n          }\n        }\n      };\n      \n      phaseResult.tasks_completed++;\n      executionResults.execution_summary.completed_successfully++;\n    } else {\n      // Simulate retry attempts\n      const retryAttempts = Math.min(task.retry_count, 2);\n      const totalDuration = taskDuration + (retryAttempts * 30);\n      \n      executionResults.task_results[taskId] = {\n        task_id: taskId,\n        name: task.name,\n        status: 'failed',\n        start_time: new Date(taskStartTime).toISOString(),\n        end_time: new Date(taskStartTime + totalDuration * 1000).toISOString(),\n        duration_seconds: totalDuration,\n        retry_attempts: retryAttempts,\n        result: {\n          success: false,\n          message: `Task ${task.name} failed after ${retryAttempts} retry attempts`,\n          error: 'Simulated task failure for testing',\n          data: {\n            operation_type: task.type,\n            parameters: task.parameters\n          }\n        }\n      };\n      \n      phaseResult.tasks_failed++;\n      executionResults.execution_summary.failed++;\n    }\n    \n    executionResults.execution_summary.total_execution_time += taskDuration;\n  });\n  \n  phaseResult.phase_duration = Date.now() - phaseStartTime;\n  if (phaseResult.tasks_failed > 0) {\n    phaseResult.phase_status = 'partial_failure';\n  }\n  \n  executionResults.phase_results.push(phaseResult);\n});\n\n// Determine overall status\nif (executionResults.execution_summary.failed > 0) {\n  if (executionResults.execution_summary.completed_successfully === 0) {\n    executionResults.overall_status = 'failed';\n  } else {\n    executionResults.overall_status = 'partial_success';\n  }\n}\n\n// Calculate success rate\nexecutionResults.execution_summary.success_rate = \n  (executionResults.execution_summary.completed_successfully / executionResults.execution_summary.total_tasks) * 100;\n\nreturn {\n  ...orchestrationData,\n  execution_results: executionResults,\n  orchestration_status: 'completed'\n};"
+      },
+      "name": "Execute Task Orchestration",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1480, 300],
+      "id": "execute-task-orchestration"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "workflow_status",
+              "name": "workflow_status",
+              "type": "string",
+              "value": "completed"
+            },
+            {
+              "id": "message",
+              "name": "message",
+              "type": "string",
+              "value": "Task orchestration workflow completed"
+            },
+            {
+              "id": "orchestration_status",
+              "name": "orchestration_status",
+              "type": "string",
+              "value": "={{ $json.execution_results.overall_status }}"
+            },
+            {
+              "id": "total_tasks",
+              "name": "total_tasks",
+              "type": "number",
+              "value": "={{ $json.execution_results.execution_summary.total_tasks }}"
+            },
+            {
+              "id": "completed_tasks",
+              "name": "completed_tasks",
+              "type": "number",
+              "value": "={{ $json.execution_results.execution_summary.completed_successfully }}"
+            },
+            {
+              "id": "failed_tasks",
+              "name": "failed_tasks",
+              "type": "number",
+              "value": "={{ $json.execution_results.execution_summary.failed }}"
+            },
+            {
+              "id": "success_rate",
+              "name": "success_rate",
+              "type": "number",
+              "value": "={{ $json.execution_results.execution_summary.success_rate }}"
+            },
+            {
+              "id": "execution_time_seconds",
+              "name": "execution_time_seconds",
+              "type": "number",
+              "value": "={{ $json.execution_results.execution_summary.total_execution_time }}"
+            }
+          ]
+        }
+      },
+      "name": "Set Orchestration Complete",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3,
+      "position": [1700, 300],
+      "id": "orchestration-complete"
+    }
+  ],
+  "connections": {
+    "When clicking \"Execute Workflow\"": {
+      "main": [
+        [
+          {
+            "node": "Initialize Task Variables",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Initialize Task Variables": {
+      "main": [
+        [
+          {
+            "node": "Parse Task Definition",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Task Definition": {
+      "main": [
+        [
+          {
+            "node": "Execute Task Orchestration",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Execute Task Orchestration": {
+      "main": [
+        [
+          {
+            "node": "Set Orchestration Complete",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": ["orchestration", "tasks", "automation", "workflow", "netbox", "orchestrator"],
+  "triggerCount": 0,
+  "updatedAt": "2024-12-19T16:20:00.000Z",
+  "versionId": "1.0.0"
+}

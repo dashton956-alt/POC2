@@ -1,0 +1,322 @@
+{
+  "name": "NetBox Compliance Monitor",
+  "active": false,
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "hours",
+              "hoursInterval": 6
+            }
+          ]
+        }
+      },
+      "id": "compliance-schedule",
+      "name": "Every 6 Hours",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.1,
+      "position": [200, 300]
+    },
+    {
+      "parameters": {
+        "url": "={{ $env.NETBOX_URL || 'http://localhost:8000' }}/api/dcim/devices/?limit=1000",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "httpHeaderAuth": {
+          "name": "Authorization",
+          "value": "Token {{ $env.NETBOX_TOKEN }}"
+        },
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "json"
+            }
+          }
+        }
+      },
+      "id": "get-all-devices",
+      "name": "Get All Devices",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [400, 300]
+    },
+    {
+      "parameters": {
+        "fieldsToSplitOut": "results",
+        "options": {}
+      },
+      "id": "split-devices",
+      "name": "Split Device List",
+      "type": "n8n-nodes-base.itemLists",
+      "typeVersion": 3,
+      "position": [600, 300]
+    },
+    {
+      "parameters": {
+        "values": {
+          "string": [
+            {
+              "name": "device_id",
+              "value": "={{ $json.id }}"
+            },
+            {
+              "name": "device_name",
+              "value": "={{ $json.name }}"
+            },
+            {
+              "name": "has_primary_ip",
+              "value": "={{ $json.primary_ip4 ? 'Yes' : 'No' }}"
+            },
+            {
+              "name": "has_description",
+              "value": "={{ $json.description ? 'Yes' : 'No' }}"
+            },
+            {
+              "name": "has_site",
+              "value": "={{ $json.site ? 'Yes' : 'No' }}"
+            },
+            {
+              "name": "has_rack",
+              "value": "={{ $json.rack ? 'Yes' : 'No' }}"
+            },
+            {
+              "name": "device_status",
+              "value": "={{ $json.status.label }}"
+            }
+          ],
+          "number": [
+            {
+              "name": "compliance_score",
+              "value": "={{ ($json.primary_ip4 ? 25 : 0) + ($json.description ? 25 : 0) + ($json.site ? 25 : 0) + ($json.rack ? 25 : 0) }}"
+            }
+          ]
+        }
+      },
+      "id": "analyze-compliance",
+      "name": "Analyze Device Compliance",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 1,
+      "position": [800, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "low-compliance",
+              "leftValue": "={{ $json.compliance_score }}",
+              "rightValue": 50,
+              "operator": {
+                "type": "number",
+                "operation": "lt"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "check-compliance-level",
+      "name": "Check Compliance Level",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1000, 300]
+    },
+    {
+      "parameters": {
+        "values": {
+          "string": [
+            {
+              "name": "issue_severity",
+              "value": "={{ $json.compliance_score < 25 ? 'High' : $json.compliance_score < 50 ? 'Medium' : 'Low' }}"
+            },
+            {
+              "name": "issues_found",
+              "value": "={{ [$json.has_primary_ip === 'No' ? 'Missing Primary IP' : '', $json.has_description === 'No' ? 'Missing Description' : '', $json.has_site === 'No' ? 'Missing Site Assignment' : '', $json.has_rack === 'No' ? 'Missing Rack Assignment' : ''].filter(x => x).join(', ') }}"
+            }
+          ]
+        }
+      },
+      "id": "flag-non-compliant",
+      "name": "Flag Non-Compliant Device",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 1,
+      "position": [1200, 200]
+    },
+    {
+      "parameters": {
+        "aggregate": "aggregateAllItemData",
+        "destinationFieldName": "non_compliant_devices",
+        "options": {}
+      },
+      "id": "aggregate-issues",
+      "name": "Aggregate Compliance Issues",
+      "type": "n8n-nodes-base.aggregate",
+      "typeVersion": 1,
+      "position": [1400, 200]
+    },
+    {
+      "parameters": {
+        "aggregate": "aggregateAllItemData",
+        "destinationFieldName": "all_devices",
+        "options": {}
+      },
+      "id": "aggregate-all",
+      "name": "Aggregate All Devices",
+      "type": "n8n-nodes-base.aggregate",
+      "typeVersion": 1,
+      "position": [1200, 400]
+    },
+    {
+      "parameters": {
+        "values": {
+          "string": [
+            {
+              "name": "report_title",
+              "value": "NetBox Compliance Report"
+            },
+            {
+              "name": "generated_at",
+              "value": "={{ $now }}"
+            },
+            {
+              "name": "total_devices",
+              "value": "={{ $('Aggregate All Devices').item.json.all_devices.length }}"
+            },
+            {
+              "name": "non_compliant_devices",
+              "value": "={{ $('Aggregate Compliance Issues').item.json.non_compliant_devices ? $('Aggregate Compliance Issues').item.json.non_compliant_devices.length : 0 }}"
+            },
+            {
+              "name": "compliance_percentage",
+              "value": "={{ Math.round((($('Aggregate All Devices').item.json.all_devices.length - ($('Aggregate Compliance Issues').item.json.non_compliant_devices ? $('Aggregate Compliance Issues').item.json.non_compliant_devices.length : 0)) / $('Aggregate All Devices').item.json.all_devices.length) * 100) }}%"
+            },
+            {
+              "name": "report_status",
+              "value": "={{ ($('Aggregate Compliance Issues').item.json.non_compliant_devices ? $('Aggregate Compliance Issues').item.json.non_compliant_devices.length : 0) === 0 ? 'All devices compliant ✅' : 'Compliance issues found ⚠️' }}"
+            }
+          ]
+        }
+      },
+      "id": "generate-report",
+      "name": "Generate Compliance Report",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 1,
+      "position": [1600, 300]
+    }
+  ],
+  "connections": {
+    "Every 6 Hours": {
+      "main": [
+        [
+          {
+            "node": "Get All Devices",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get All Devices": {
+      "main": [
+        [
+          {
+            "node": "Split Device List",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Split Device List": {
+      "main": [
+        [
+          {
+            "node": "Analyze Device Compliance",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Analyze Device Compliance": {
+      "main": [
+        [
+          {
+            "node": "Check Compliance Level",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Aggregate All Devices",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Compliance Level": {
+      "main": [
+        [
+          {
+            "node": "Flag Non-Compliant Device",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Flag Non-Compliant Device": {
+      "main": [
+        [
+          {
+            "node": "Aggregate Compliance Issues",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Aggregate Compliance Issues": {
+      "main": [
+        [
+          {
+            "node": "Generate Compliance Report",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Aggregate All Devices": {
+      "main": [
+        [
+          {
+            "node": "Generate Compliance Report",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {},
+  "staticData": null,
+  "tags": [
+    {
+      "createdAt": "2025-08-11T12:00:00.000Z",
+      "updatedAt": "2025-08-11T12:00:00.000Z",
+      "id": "compliance",
+      "name": "compliance"
+    }
+  ],
+  "triggerCount": 0,
+  "updatedAt": "2025-08-11T12:00:00.000Z",
+  "versionId": "1"
+}

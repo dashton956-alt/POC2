@@ -1,0 +1,382 @@
+{
+  "name": "Import Device Types",
+  "nodes": [
+    {
+      "parameters": {},
+      "name": "When clicking \"Execute Workflow\"",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [820, 300],
+      "id": "trigger-import-device-types"
+    },
+    {
+      "parameters": {
+        "content": "## Device Types Import Workflow\n\n**Purpose**: Import and manage device types in NetBox from various sources\n\n**Import Sources**:\n1. **Vendor Libraries**\n   - Cisco Device Library\n   - Juniper Device Models\n   - Arista Platform Definitions\n   - Generic Network Equipment\n\n2. **Custom Definitions**\n   - Customer-specific device types\n   - Virtual network functions\n   - Cloud provider instances\n\n3. **Automated Discovery**\n   - SNMP-based device discovery\n   - LLDP neighbor information\n   - Network scanning results\n\n**Device Type Attributes**:\n- Manufacturer and model information\n- Interface types and counts\n- Power specifications\n- Physical dimensions\n- Console and management interfaces\n\n**Process Flow**:\n1. Load device type definitions from source\n2. Validate device specifications\n3. Check for existing device types in NetBox\n4. Create or update device type entries\n5. Configure interface templates\n6. Update device relationships\n\n**Environment Variables Used**:\n- `NETBOX_TOKEN`: NetBox API authentication\n- `NETBOX_URL`: NetBox instance URL\n- `IMPORT_SOURCE`: Source of device type data\n- `DEVICE_LIBRARY_PATH`: Path to device definitions\n- `UPDATE_EXISTING`: Update existing device types"
+      },
+      "name": "Workflow Documentation",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [400, 80],
+      "id": "doc-import-device-types"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "workflow_id",
+              "name": "workflow_id",
+              "type": "string",
+              "value": "={{ $runIndex }}_import_device_types_{{ Date.now() }}"
+            },
+            {
+              "id": "workflow_type",
+              "name": "workflow_type",
+              "type": "string",
+              "value": "import_workflow"
+            },
+            {
+              "id": "product_type",
+              "name": "product_type",
+              "type": "string",
+              "value": "DEVICE_TYPES"
+            },
+            {
+              "id": "import_source",
+              "name": "import_source",
+              "type": "string",
+              "value": "={{ $env.IMPORT_SOURCE || 'vendor_library' }}"
+            },
+            {
+              "id": "update_existing",
+              "name": "update_existing",
+              "type": "boolean",
+              "value": "={{ $env.UPDATE_EXISTING === 'true' }}"
+            }
+          ]
+        }
+      },
+      "name": "Initialize Import Variables",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3,
+      "position": [1040, 300],
+      "id": "init-import-variables"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Load device type definitions (simulated data)\nconst importVars = $input.all()[0].json;\n\n// Simulated device type library\nconst deviceTypeLibrary = {\n  vendors: {\n    cisco: {\n      name: 'Cisco Systems',\n      slug: 'cisco',\n      device_types: [\n        {\n          model: 'Catalyst 9300-48P',\n          slug: 'catalyst-9300-48p',\n          part_number: 'C9300-48P',\n          u_height: 1,\n          is_full_depth: true,\n          interfaces: [\n            { name: 'GigabitEthernet1/0/{i}', type: '1000base-t', count: 48 },\n            { name: 'TenGigabitEthernet1/1/{i}', type: '10gbase-x-sfpp', count: 4 }\n          ],\n          console_ports: [{ name: 'Console', type: 'rj-45' }],\n          power_ports: [{ name: 'PS1', type: 'iec-60320-c14' }]\n        },\n        {\n          model: 'ASR1001-X',\n          slug: 'asr1001-x',\n          part_number: 'ASR1001-X',\n          u_height: 1,\n          is_full_depth: true,\n          interfaces: [\n            { name: 'GigabitEthernet0/{i}', type: '1000base-t', count: 6 },\n            { name: 'TenGigabitEthernet0/0/{i}', type: '10gbase-x-sfpp', count: 2 }\n          ],\n          console_ports: [{ name: 'Console', type: 'rj-45' }],\n          power_ports: [{ name: 'PWR', type: 'iec-60320-c14' }]\n        }\n      ]\n    },\n    juniper: {\n      name: 'Juniper Networks',\n      slug: 'juniper',\n      device_types: [\n        {\n          model: 'EX4300-48P',\n          slug: 'ex4300-48p',\n          part_number: 'EX4300-48P',\n          u_height: 1,\n          is_full_depth: true,\n          interfaces: [\n            { name: 'ge-0/0/{i}', type: '1000base-t', count: 48 },\n            { name: 'xe-0/2/{i}', type: '10gbase-x-sfpp', count: 4 }\n          ],\n          console_ports: [{ name: 'Console', type: 'rj-45' }],\n          power_ports: [{ name: 'PWR0', type: 'iec-60320-c14' }]\n        }\n      ]\n    },\n    arista: {\n      name: 'Arista Networks',\n      slug: 'arista',\n      device_types: [\n        {\n          model: '7050SX3-48YC12',\n          slug: '7050sx3-48yc12',\n          part_number: 'DCS-7050SX3-48YC12',\n          u_height: 1,\n          is_full_depth: true,\n          interfaces: [\n            { name: 'Ethernet{i}', type: '25gbase-x-sfp28', count: 48 },\n            { name: 'Ethernet{i}', type: '100gbase-x-qsfp28', count: 12 }\n          ],\n          console_ports: [{ name: 'Console', type: 'rj-45' }],\n          power_ports: [{ name: 'PowerSupply1', type: 'iec-60320-c14' }]\n        }\n      ]\n    }\n  }\n};\n\n// Select device types based on import source\nlet selectedDeviceTypes = [];\n\nswitch (importVars.import_source) {\n  case 'cisco':\n    selectedDeviceTypes = deviceTypeLibrary.vendors.cisco.device_types.map(dt => ({\n      ...dt,\n      manufacturer: deviceTypeLibrary.vendors.cisco\n    }));\n    break;\n  case 'juniper':\n    selectedDeviceTypes = deviceTypeLibrary.vendors.juniper.device_types.map(dt => ({\n      ...dt,\n      manufacturer: deviceTypeLibrary.vendors.juniper\n    }));\n    break;\n  case 'arista':\n    selectedDeviceTypes = deviceTypeLibrary.vendors.arista.device_types.map(dt => ({\n      ...dt,\n      manufacturer: deviceTypeLibrary.vendors.arista\n    }));\n    break;\n  case 'all':\n  case 'vendor_library':\n  default:\n    // Load all device types\n    Object.keys(deviceTypeLibrary.vendors).forEach(vendor => {\n      const vendorData = deviceTypeLibrary.vendors[vendor];\n      selectedDeviceTypes = selectedDeviceTypes.concat(\n        vendorData.device_types.map(dt => ({\n          ...dt,\n          manufacturer: vendorData\n        }))\n      );\n    });\n}\n\nreturn {\n  workflow_id: importVars.workflow_id,\n  import_source: importVars.import_source,\n  update_existing: importVars.update_existing,\n  device_types: selectedDeviceTypes,\n  total_device_types: selectedDeviceTypes.length,\n  loaded_at: new Date().toISOString()\n};"
+      },
+      "name": "Load Device Type Definitions",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1260, 300],
+      "id": "load-device-definitions"
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $env.NETBOX_URL }}/api/dcim/manufacturers/",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "netBoxApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Token {{ $env.NETBOX_TOKEN }}"
+            }
+          ]
+        }
+      },
+      "name": "Get Existing Manufacturers",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [1480, 300],
+      "id": "get-existing-manufacturers"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Process manufacturers and device types for import\nconst deviceData = $('Load Device Type Definitions').item(0).json;\nconst existingMfrs = $('Get Existing Manufacturers').item(0).json;\n\n// Build manufacturer mapping\nconst manufacturerMap = {};\nexistingMfrs.results.forEach(mfr => {\n  manufacturerMap[mfr.slug] = mfr;\n});\n\n// Prepare import operations\nconst importOperations = {\n  manufacturers_to_create: [],\n  device_types_to_create: [],\n  device_types_to_update: [],\n  interface_templates: [],\n  validation_errors: []\n};\n\n// Process each device type\ndeviceData.device_types.forEach((deviceType, index) => {\n  const mfrSlug = deviceType.manufacturer.slug;\n  \n  // Check if manufacturer exists\n  if (!manufacturerMap[mfrSlug]) {\n    // Add manufacturer to creation list if not already added\n    const existingMfr = importOperations.manufacturers_to_create.find(m => m.slug === mfrSlug);\n    if (!existingMfr) {\n      importOperations.manufacturers_to_create.push({\n        name: deviceType.manufacturer.name,\n        slug: deviceType.manufacturer.slug\n      });\n    }\n  }\n  \n  // Prepare device type for import\n  const deviceTypeRecord = {\n    manufacturer: deviceType.manufacturer.slug,\n    model: deviceType.model,\n    slug: deviceType.slug,\n    part_number: deviceType.part_number || '',\n    u_height: deviceType.u_height || 1,\n    is_full_depth: deviceType.is_full_depth || true,\n    airflow: 'front-to-rear',\n    weight: 10, // Default weight in kg\n    weight_unit: 'kg'\n  };\n  \n  // Add to creation list\n  importOperations.device_types_to_create.push(deviceTypeRecord);\n  \n  // Process interface templates\n  if (deviceType.interfaces) {\n    deviceType.interfaces.forEach(intfTemplate => {\n      for (let i = 1; i <= intfTemplate.count; i++) {\n        const intfName = intfTemplate.name.replace('{i}', i);\n        importOperations.interface_templates.push({\n          device_type_slug: deviceType.slug,\n          name: intfName,\n          type: intfTemplate.type,\n          mgmt_only: false\n        });\n      }\n    });\n  }\n  \n  // Process console ports\n  if (deviceType.console_ports) {\n    deviceType.console_ports.forEach((consolePort, idx) => {\n      importOperations.interface_templates.push({\n        device_type_slug: deviceType.slug,\n        name: consolePort.name,\n        type: 'console',\n        is_console: true\n      });\n    });\n  }\n});\n\nreturn {\n  ...deviceData,\n  import_operations: importOperations,\n  summary: {\n    manufacturers_to_create: importOperations.manufacturers_to_create.length,\n    device_types_to_create: importOperations.device_types_to_create.length,\n    interface_templates_to_create: importOperations.interface_templates.length\n  }\n};"
+      },
+      "name": "Prepare Import Operations",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1700, 300],
+      "id": "prepare-import-operations"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "leftValue": "",
+            "caseSensitive": true,
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "manufacturers-to-create",
+              "leftValue": "={{ $json.summary.manufacturers_to_create }}",
+              "rightValue": 0,
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "name": "Need to Create Manufacturers",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1920, 300],
+      "id": "check-create-manufacturers"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "manufacturers_created",
+              "name": "manufacturers_created",
+              "type": "number",
+              "value": "={{ $json.summary.manufacturers_to_create }}"
+            },
+            {
+              "id": "message",
+              "name": "message",
+              "type": "string",
+              "value": "Created {{ $json.summary.manufacturers_to_create }} manufacturers"
+            }
+          ]
+        }
+      },
+      "name": "Simulate Manufacturer Creation",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3,
+      "position": [2140, 240],
+      "id": "simulate-manufacturer-creation"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "manufacturers_created",
+              "name": "manufacturers_created",
+              "type": "number",
+              "value": 0
+            },
+            {
+              "id": "message",
+              "name": "message",
+              "type": "string",
+              "value": "No manufacturers need to be created"
+            }
+          ]
+        }
+      },
+      "name": "Skip Manufacturer Creation",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3,
+      "position": [2140, 360],
+      "id": "skip-manufacturer-creation"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "device_types_created",
+              "name": "device_types_created",
+              "type": "number",
+              "value": "={{ $('Prepare Import Operations').item(0).json.summary.device_types_to_create }}"
+            },
+            {
+              "id": "interface_templates_created",
+              "name": "interface_templates_created",
+              "type": "number",
+              "value": "={{ $('Prepare Import Operations').item(0).json.summary.interface_templates_to_create }}"
+            },
+            {
+              "id": "import_status",
+              "name": "import_status",
+              "type": "string",
+              "value": "completed"
+            }
+          ]
+        }
+      },
+      "name": "Simulate Device Type Import",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3,
+      "position": [2360, 300],
+      "id": "simulate-device-import"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "workflow_status",
+              "name": "workflow_status",
+              "type": "string",
+              "value": "completed"
+            },
+            {
+              "id": "message",
+              "name": "message",
+              "type": "string",
+              "value": "Device types import completed successfully"
+            },
+            {
+              "id": "total_manufacturers",
+              "name": "total_manufacturers",
+              "type": "number",
+              "value": "={{ $('Simulate Device Type Import').item(0).json.device_types_created || 0 + $input.first().json.manufacturers_created || 0 }}"
+            },
+            {
+              "id": "total_device_types",
+              "name": "total_device_types",
+              "type": "number",
+              "value": "={{ $('Simulate Device Type Import').item(0).json.device_types_created || 0 }}"
+            },
+            {
+              "id": "total_interfaces",
+              "name": "total_interfaces",
+              "type": "number",
+              "value": "={{ $('Simulate Device Type Import').item(0).json.interface_templates_created || 0 }}"
+            },
+            {
+              "id": "import_source",
+              "name": "import_source",
+              "type": "string",
+              "value": "={{ $('Prepare Import Operations').item(0).json.import_source }}"
+            }
+          ]
+        }
+      },
+      "name": "Set Import Complete",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3,
+      "position": [2580, 300],
+      "id": "import-complete"
+    }
+  ],
+  "connections": {
+    "When clicking \"Execute Workflow\"": {
+      "main": [
+        [
+          {
+            "node": "Initialize Import Variables",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Initialize Import Variables": {
+      "main": [
+        [
+          {
+            "node": "Load Device Type Definitions",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Load Device Type Definitions": {
+      "main": [
+        [
+          {
+            "node": "Get Existing Manufacturers",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Existing Manufacturers": {
+      "main": [
+        [
+          {
+            "node": "Prepare Import Operations",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Import Operations": {
+      "main": [
+        [
+          {
+            "node": "Need to Create Manufacturers",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Need to Create Manufacturers": {
+      "main": [
+        [
+          {
+            "node": "Simulate Manufacturer Creation",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Skip Manufacturer Creation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Simulate Manufacturer Creation": {
+      "main": [
+        [
+          {
+            "node": "Simulate Device Type Import",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Skip Manufacturer Creation": {
+      "main": [
+        [
+          {
+            "node": "Simulate Device Type Import",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Simulate Device Type Import": {
+      "main": [
+        [
+          {
+            "node": "Set Import Complete",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": ["import", "device-types", "netbox", "manufacturers", "orchestrator"],
+  "triggerCount": 0,
+  "updatedAt": "2024-12-19T16:10:00.000Z",
+  "versionId": "1.0.0"
+}

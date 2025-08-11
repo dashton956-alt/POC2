@@ -1,0 +1,443 @@
+{
+  "name": "Create Node",
+  "nodes": [
+    {
+      "parameters": {},
+      "name": "When clicking \"Execute Workflow\"",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [820, 300],
+      "id": "trigger-create-node"
+    },
+    {
+      "parameters": {
+        "content": "## Node Creation Workflow\n\n**Purpose**: Provision new network nodes in the infrastructure\n\n**Node Types**:\n- Provider (P) nodes - Core network devices\n- Provider Edge (PE) nodes - Customer-facing devices\n- Customer Edge (CE) nodes - Customer premise equipment\n\n**Process**:\n1. Construct node subscription model\n2. Register in NetBox inventory management\n3. Reserve loopback IP addresses \n4. Configure initial device settings\n5. Provision in network resource manager\n6. Deploy base configuration\n7. Validate node deployment\n\n**Environment Variables Used**:\n- `NETBOX_TOKEN`: NetBox API authentication\n- `NETBOX_URL`: NetBox instance URL\n- `LSO_URL`: LSO automation endpoint\n- `CUSTOMER_ID`: Customer identifier\n- `NODE_SITE_ID`: Target site for node deployment"
+      },
+      "name": "Workflow Documentation",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [400, 80],
+      "id": "doc-create-node"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "workflow_id",
+              "name": "workflow_id",
+              "type": "string",
+              "value": "={{ $runIndex }}_create_node_{{ Date.now() }}"
+            },
+            {
+              "id": "workflow_type",
+              "name": "workflow_type",
+              "type": "string",
+              "value": "create_workflow"
+            },
+            {
+              "id": "product_type",
+              "name": "product_type",
+              "type": "string",
+              "value": "Node"
+            },
+            {
+              "id": "target",
+              "name": "target",
+              "type": "string",
+              "value": "CREATE"
+            },
+            {
+              "id": "customer_id",
+              "name": "customer_id",
+              "type": "string",
+              "value": "={{ $env.CUSTOMER_ID || 'default-customer' }}"
+            },
+            {
+              "id": "site_id",
+              "name": "site_id",
+              "type": "string",
+              "value": "={{ $env.NODE_SITE_ID || '1' }}"
+            }
+          ]
+        }
+      },
+      "name": "Initialize Node Variables",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3,
+      "position": [1040, 300],
+      "id": "init-node-variables"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Construct node subscription model\nconst workflowVars = $input.all()[0].json;\n\n// Node configuration (in production, these would come from user input forms)\nconst nodeConfig = {\n  node_name: `PE-${Math.floor(Math.random() * 1000).toString().padStart(3, '0')}`,\n  node_type: 'provider_edge', // provider, provider_edge, customer_edge\n  vendor: 'Cisco',\n  model: 'ASR1000',\n  serial_number: `SNK${Math.floor(Math.random() * 1000000)}`,\n  site_id: parseInt(workflowVars.site_id),\n  role: 'pe-router',\n  status: 'planned',\n  comments: 'Created via n8n workflow automation',\n  ims_id: null,\n  nrm_id: null,\n  loopback_ipv6: null,\n  under_maintenance: false\n};\n\n// Create subscription model\nconst nodeSubscription = {\n  workflow_id: workflowVars.workflow_id,\n  product_type: workflowVars.product_type,\n  customer_id: workflowVars.customer_id,\n  status: 'provisioning',\n  node: nodeConfig,\n  created_at: new Date().toISOString()\n};\n\nreturn nodeSubscription;"
+      },
+      "name": "Construct Node Model",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1260, 300],
+      "id": "construct-node-model"
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $env.NETBOX_URL }}/api/dcim/sites/{{ $json.node.site_id }}/",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "netBoxApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Token {{ $env.NETBOX_TOKEN }}"
+            }
+          ]
+        }
+      },
+      "name": "Validate Site Exists",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [1480, 300],
+      "id": "validate-site"
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $env.NETBOX_URL }}/api/dcim/device-types/",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "netBoxApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Token {{ $env.NETBOX_TOKEN }}"
+            }
+          ]
+        },
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "model",
+              "value": "={{ $('Construct Node Model').item(0).json.node.model }}"
+            },
+            {
+              "name": "manufacturer__name",
+              "value": "={{ $('Construct Node Model').item(0).json.node.vendor }}"
+            }
+          ]
+        }
+      },
+      "name": "Get Device Type",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [1700, 300],
+      "id": "get-device-type"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.NETBOX_URL }}/api/dcim/devices/",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "netBoxApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Token {{ $env.NETBOX_TOKEN }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\n  \"name\": \"{{ $('Construct Node Model').item(0).json.node.node_name }}\",\n  \"device_type\": {{ $json.results[0].id }},\n  \"role\": 2,\n  \"site\": {{ $('Construct Node Model').item(0).json.node.site_id }},\n  \"status\": \"planned\",\n  \"serial\": \"{{ $('Construct Node Model').item(0).json.node.serial_number }}\",\n  \"comments\": \"{{ $('Construct Node Model').item(0).json.node.comments }}\",\n  \"tenant\": \"{{ $('Construct Node Model').item(0).json.customer_id }}\"\n}"
+      },
+      "name": "Create Node in NetBox",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [1920, 300],
+      "id": "create-node-netbox"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.NETBOX_URL }}/api/ipam/ip-addresses/",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "netBoxApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Token {{ $env.NETBOX_TOKEN }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\n  \"address\": \"10.{{ Math.floor(Math.random() * 255) }}.{{ Math.floor(Math.random() * 255) }}.1/32\",\n  \"description\": \"Loopback address for {{ $('Construct Node Model').item(0).json.node.node_name }}\",\n  \"status\": \"active\",\n  \"role\": \"loopback\",\n  \"tenant\": \"{{ $('Construct Node Model').item(0).json.customer_id }}\"\n}"
+      },
+      "name": "Reserve Loopback IPv6 Address",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [2140, 300],
+      "id": "reserve-loopback-ipv6"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "nrm_id",
+              "name": "nrm_id",
+              "type": "number",
+              "value": "={{ Math.floor(Math.random() * 65536) }}"
+            },
+            {
+              "id": "nrm_status",
+              "name": "nrm_status",
+              "type": "string",
+              "value": "registered"
+            }
+          ]
+        }
+      },
+      "name": "Provision Node in NRM",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3,
+      "position": [2360, 300],
+      "id": "provision-node-nrm"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.LSO_URL || 'http://localhost:8080' }}/api/playbooks/execute",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\n  \"playbook_name\": \"create_node.yaml\",\n  \"inventory\": \"{{ $('Construct Node Model').item(0).json.node.node_name }}\",\n  \"extra_vars\": {\n    \"node\": {\n      \"name\": \"{{ $('Construct Node Model').item(0).json.node.node_name }}\",\n      \"type\": \"{{ $('Construct Node Model').item(0).json.node.node_type }}\",\n      \"vendor\": \"{{ $('Construct Node Model').item(0).json.node.vendor }}\",\n      \"model\": \"{{ $('Construct Node Model').item(0).json.node.model }}\",\n      \"serial\": \"{{ $('Construct Node Model').item(0).json.node.serial_number }}\",\n      \"loopback_ip\": \"{{ $('Reserve Loopback IPv6 Address').item(0).json.address }}\",\n      \"nrm_id\": {{ $('Provision Node in NRM').item(0).json.nrm_id }}\n    },\n    \"workflow_id\": \"{{ $('Construct Node Model').item(0).json.workflow_id }}\"\n  }\n}"
+      },
+      "name": "Deploy Initial Configuration",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [2580, 300],
+      "id": "deploy-initial-config"
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "={{ $env.NETBOX_URL }}/api/dcim/devices/{{ $('Create Node in NetBox').item(0).json.id }}/",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "netBoxApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Token {{ $env.NETBOX_TOKEN }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\n  \"status\": \"active\",\n  \"comments\": \"Node provisioned successfully via n8n workflow\"\n}"
+      },
+      "name": "Activate Node in NetBox",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [2800, 300],
+      "id": "activate-node-netbox"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "workflow_status",
+              "name": "workflow_status",
+              "type": "string",
+              "value": "completed"
+            },
+            {
+              "id": "message",
+              "name": "message",
+              "type": "string",
+              "value": "Node {{ $('Construct Node Model').item(0).json.node.node_name }} created successfully"
+            },
+            {
+              "id": "node_id",
+              "name": "node_id",
+              "type": "number",
+              "value": "={{ $('Create Node in NetBox').item(0).json.id }}"
+            },
+            {
+              "id": "node_name",
+              "name": "node_name",
+              "type": "string",
+              "value": "={{ $('Construct Node Model').item(0).json.node.node_name }}"
+            },
+            {
+              "id": "loopback_address",
+              "name": "loopback_address",
+              "type": "string",
+              "value": "={{ $('Reserve Loopback IPv6 Address').item(0).json.address }}"
+            },
+            {
+              "id": "nrm_id",
+              "name": "nrm_id",
+              "type": "number",
+              "value": "={{ $('Provision Node in NRM').item(0).json.nrm_id }}"
+            }
+          ]
+        }
+      },
+      "name": "Set Node Creation Success",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3,
+      "position": [3020, 300],
+      "id": "node-creation-success"
+    }
+  ],
+  "connections": {
+    "When clicking \"Execute Workflow\"": {
+      "main": [
+        [
+          {
+            "node": "Initialize Node Variables",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Initialize Node Variables": {
+      "main": [
+        [
+          {
+            "node": "Construct Node Model",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Construct Node Model": {
+      "main": [
+        [
+          {
+            "node": "Validate Site Exists",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Site Exists": {
+      "main": [
+        [
+          {
+            "node": "Get Device Type",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Device Type": {
+      "main": [
+        [
+          {
+            "node": "Create Node in NetBox",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Node in NetBox": {
+      "main": [
+        [
+          {
+            "node": "Reserve Loopback IPv6 Address",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Reserve Loopback IPv6 Address": {
+      "main": [
+        [
+          {
+            "node": "Provision Node in NRM",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Provision Node in NRM": {
+      "main": [
+        [
+          {
+            "node": "Deploy Initial Configuration",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Deploy Initial Configuration": {
+      "main": [
+        [
+          {
+            "node": "Activate Node in NetBox",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Activate Node in NetBox": {
+      "main": [
+        [
+          {
+            "node": "Set Node Creation Success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": ["node", "network", "device", "provisioning", "netbox", "orchestrator"],
+  "triggerCount": 0,
+  "updatedAt": "2024-12-19T15:45:00.000Z",
+  "versionId": "1.0.0"
+}

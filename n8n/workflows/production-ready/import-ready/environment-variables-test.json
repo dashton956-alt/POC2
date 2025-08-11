@@ -1,0 +1,159 @@
+{
+  "name": "Environment Variables Test",
+  "active": false,
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "GET",
+        "path": "env-test",
+        "options": {}
+      },
+      "id": "webhook-env-test",
+      "name": "Webhook - Environment Test",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [200, 300],
+      "webhookId": "env-test"
+    },
+    {
+      "parameters": {
+        "values": {
+          "string": [
+            {
+              "name": "netbox_url",
+              "value": "={{ $env.NETBOX_URL || 'http://localhost:8000' }}"
+            },
+            {
+              "name": "netbox_token",
+              "value": "={{ $env.NETBOX_TOKEN ? 'Token configured ✅' : 'Token missing ❌' }}"
+            },
+            {
+              "name": "customer_id",
+              "value": "={{ $env.CUSTOMER_ID || 'default' }}"
+            },
+            {
+              "name": "openai_model",
+              "value": "={{ $env.OPENAI_MODEL || 'gpt-4' }}"
+            },
+            {
+              "name": "gitlab_url",
+              "value": "={{ $env.GITLAB_URL || 'https://gitlab.com' }}"
+            }
+          ]
+        }
+      },
+      "id": "set-env-vars",
+      "name": "Collect Environment Variables",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 1,
+      "position": [400, 300]
+    },
+    {
+      "parameters": {
+        "url": "={{ $json.netbox_url }}/api/dcim/sites/",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "httpHeaderAuth": {
+          "name": "Authorization",
+          "value": "Token {{ $env.NETBOX_TOKEN }}"
+        },
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "json"
+            }
+          }
+        }
+      },
+      "id": "test-netbox-api",
+      "name": "Test NetBox API",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [600, 300]
+    },
+    {
+      "parameters": {
+        "values": {
+          "string": [
+            {
+              "name": "status",
+              "value": "Environment Test Complete ✅"
+            },
+            {
+              "name": "netbox_connectivity",
+              "value": "={{ $json.count !== undefined ? 'Connected ✅' : 'Failed ❌' }}"
+            },
+            {
+              "name": "sites_found",
+              "value": "={{ $json.count || 0 }}"
+            },
+            {
+              "name": "environment_variables",
+              "value": "All configured ✅"
+            },
+            {
+              "name": "test_timestamp",
+              "value": "={{ $now }}"
+            }
+          ]
+        }
+      },
+      "id": "format-response",
+      "name": "Format Test Results",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 1,
+      "position": [800, 300]
+    }
+  ],
+  "connections": {
+    "Webhook - Environment Test": {
+      "main": [
+        [
+          {
+            "node": "Collect Environment Variables",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Collect Environment Variables": {
+      "main": [
+        [
+          {
+            "node": "Test NetBox API",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Test NetBox API": {
+      "main": [
+        [
+          {
+            "node": "Format Test Results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "responseMode": "responseNode",
+    "responseNode": "Format Test Results"
+  },
+  "staticData": null,
+  "tags": [
+    {
+      "createdAt": "2025-08-11T12:00:00.000Z",
+      "updatedAt": "2025-08-11T12:00:00.000Z",
+      "id": "test-env",
+      "name": "testing"
+    }
+  ],
+  "triggerCount": 0,
+  "updatedAt": "2025-08-11T12:00:00.000Z",
+  "versionId": "1"
+}

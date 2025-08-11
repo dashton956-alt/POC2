@@ -1,0 +1,268 @@
+{
+  "package_info": {
+    "name": "AI GitOps Network Automation Package",
+    "version": "1.0.0",
+    "description": "Complete n8n workflow package for AI-powered network automation with NetBox integration",
+    "created": "2025-08-11T12:00:00.000Z",
+    "author": "AI GitOps Team",
+    "repository": "https://github.com/dashton956-alt/POC2.git"
+  },
+  "workflows": [
+    {
+      "file": "environment-variables-test.json",
+      "name": "Environment Variables Test",
+      "category": "testing",
+      "description": "Validates environment variables and NetBox connectivity",
+      "priority": 1,
+      "webhook_path": "/webhook/env-test",
+      "requires": ["NETBOX_URL", "NETBOX_TOKEN"],
+      "features": ["environment_validation", "connectivity_test"],
+      "active_by_default": true
+    },
+    {
+      "file": "advanced-environment-test.json",
+      "name": "Advanced Environment Test",
+      "category": "testing",
+      "description": "Comprehensive environment validation with detailed reporting",
+      "priority": 2,
+      "webhook_path": "/webhook/env-test",
+      "requires": ["NETBOX_URL", "NETBOX_TOKEN"],
+      "features": ["advanced_validation", "detailed_reporting"],
+      "active_by_default": false
+    },
+    {
+      "file": "netbox-connection-test.json", 
+      "name": "NetBox Connection Test",
+      "category": "testing",
+      "description": "Automated NetBox connection monitoring every 30 minutes",
+      "priority": 3,
+      "webhook_path": null,
+      "requires": ["NETBOX_URL", "NETBOX_TOKEN"],
+      "features": ["scheduled_monitoring", "health_checks"],
+      "active_by_default": true
+    },
+    {
+      "file": "netbox-device-discovery.json",
+      "name": "NetBox Device Discovery", 
+      "category": "netbox",
+      "description": "Discovers and monitors network devices every 15 minutes",
+      "priority": 4,
+      "webhook_path": null,
+      "requires": ["NETBOX_URL", "NETBOX_TOKEN"],
+      "features": ["device_discovery", "interface_monitoring", "scheduled_execution"],
+      "active_by_default": true
+    },
+    {
+      "file": "netbox-ipam-management.json",
+      "name": "NetBox IPAM Management",
+      "category": "netbox", 
+      "description": "REST API for IP address lifecycle management",
+      "priority": 5,
+      "webhook_path": "/webhook/netbox-ipam",
+      "requires": ["NETBOX_URL", "NETBOX_TOKEN"],
+      "features": ["ip_management", "device_assignment", "rest_api"],
+      "active_by_default": true
+    },
+    {
+      "file": "netbox-compliance-monitor.json",
+      "name": "NetBox Compliance Monitor",
+      "category": "compliance",
+      "description": "Network compliance checking with automated reporting every 6 hours", 
+      "priority": 6,
+      "webhook_path": null,
+      "requires": ["NETBOX_URL", "NETBOX_TOKEN"],
+      "features": ["compliance_scoring", "automated_reporting", "scheduled_execution"],
+      "active_by_default": true
+    },
+    {
+      "file": "netbox-compliance-check-original.json",
+      "name": "NetBox Compliance Check (Original)",
+      "category": "compliance",
+      "description": "Original compliance workflow with detailed analysis",
+      "priority": 7,
+      "webhook_path": null,
+      "requires": ["NETBOX_URL", "NETBOX_TOKEN"],
+      "features": ["detailed_compliance", "original_logic"],
+      "active_by_default": false
+    },
+    {
+      "file": "multi-tenant-netbox-router.json",
+      "name": "Multi-Tenant NetBox Router",
+      "category": "routing",
+      "description": "Routes requests to customer-specific NetBox instances",
+      "priority": 8,
+      "webhook_path": "/webhook/tenant-router", 
+      "requires": ["NETBOX_URL", "NETBOX_TOKEN", "CUSTOMER_ID"],
+      "features": ["multi_tenancy", "request_routing", "customer_isolation"],
+      "active_by_default": false
+    },
+    {
+      "file": "quick-start-ai-network.json",
+      "name": "Quick Start AI Network",
+      "category": "ai",
+      "description": "Simple AI-powered network automation with OpenAI integration",
+      "priority": 9,
+      "webhook_path": "/webhook/ai-quick",
+      "requires": ["NETBOX_URL", "NETBOX_TOKEN", "OPENAI_API_KEY"],
+      "features": ["ai_integration", "playbook_generation", "netbox_context"],
+      "active_by_default": false
+    },
+    {
+      "file": "ai-gitops-automation-complete.json",
+      "name": "AI GitOps Automation Complete",
+      "category": "ai_gitops", 
+      "description": "Full enterprise AI GitOps pipeline with approval workflows (29KB)",
+      "priority": 10,
+      "webhook_path": "/webhook/ai-gitops-automation",
+      "requires": ["NETBOX_URL", "NETBOX_TOKEN", "OPENAI_API_KEY", "GITLAB_URL", "GITLAB_TOKEN"],
+      "features": ["full_gitops", "ai_integration", "approval_workflows", "ci_cd_integration"],
+      "active_by_default": false
+    },
+    {
+      "file": "set_node_config.json",
+      "name": "Node Configuration Manager",
+      "category": "configuration",
+      "description": "Manages node configurations for AI GitOps workflows",
+      "priority": 11,
+      "webhook_path": null,
+      "requires": ["NETBOX_URL", "NETBOX_TOKEN"],
+      "features": ["node_config", "gitops_support"],
+      "active_by_default": false
+    }
+  ],
+  "environment_variables": {
+    "required": {
+      "NETBOX_URL": {
+        "description": "NetBox instance URL",
+        "example": "http://localhost:8000",
+        "default": "http://localhost:8000"
+      },
+      "NETBOX_TOKEN": {
+        "description": "NetBox API authentication token",
+        "example": "f1d858fe37629ad6ccdd0aec82cf5f3be39351d9",
+        "security": "sensitive"
+      }
+    },
+    "optional": {
+      "CUSTOMER_ID": {
+        "description": "Customer identifier for multi-tenant deployments",
+        "example": "demo-corp",
+        "default": "default"
+      },
+      "OPENAI_API_KEY": {
+        "description": "OpenAI API key for AI features",
+        "example": "sk-...",
+        "security": "sensitive"
+      },
+      "OPENAI_MODEL": {
+        "description": "OpenAI model to use",
+        "example": "gpt-4",
+        "default": "gpt-4"
+      },
+      "GITLAB_URL": {
+        "description": "GitLab instance URL for GitOps",
+        "example": "https://gitlab.com",
+        "default": "https://gitlab.com"
+      },
+      "GITLAB_TOKEN": {
+        "description": "GitLab API token",
+        "example": "glpat-...",
+        "security": "sensitive"
+      }
+    }
+  },
+  "credentials_required": [
+    {
+      "name": "netbox",
+      "type": "httpHeaderAuth",
+      "header_name": "Authorization",
+      "header_value": "Token YOUR_NETBOX_TOKEN",
+      "workflows_using": ["all"]
+    },
+    {
+      "name": "openai",
+      "type": "httpHeaderAuth", 
+      "header_name": "Authorization",
+      "header_value": "Bearer YOUR_OPENAI_KEY",
+      "workflows_using": ["quick-start-ai-network.json", "ai-gitops-automation-complete.json"]
+    }
+  ],
+  "webhook_endpoints": [
+    {
+      "path": "/webhook/env-test",
+      "method": "GET",
+      "description": "Test environment variables and connectivity",
+      "workflow": "environment-variables-test.json"
+    },
+    {
+      "path": "/webhook/netbox-ipam",
+      "method": "POST",
+      "description": "IP address management operations",
+      "workflow": "netbox-ipam-management.json",
+      "example_payload": {
+        "action": "create_ip",
+        "ip_address": "192.168.1.100/24",
+        "description": "Server IP",
+        "device_name": "switch01"
+      }
+    },
+    {
+      "path": "/webhook/tenant-router",
+      "method": "POST", 
+      "description": "Multi-tenant request routing",
+      "workflow": "multi-tenant-netbox-router.json",
+      "example_payload": {
+        "customer_id": "demo-corp",
+        "target": "netbox",
+        "action": "route_request"
+      }
+    },
+    {
+      "path": "/webhook/ai-quick",
+      "method": "POST",
+      "description": "Quick AI network automation",
+      "workflow": "quick-start-ai-network.json", 
+      "example_payload": {
+        "request": "Create VLAN configuration for guest network",
+        "priority": "normal"
+      }
+    },
+    {
+      "path": "/webhook/ai-gitops-automation",
+      "method": "POST",
+      "description": "Complete AI GitOps automation pipeline",
+      "workflow": "ai-gitops-automation-complete.json",
+      "example_payload": {
+        "request": "Deploy new switch configuration",
+        "site": "branch-01",
+        "priority": "high"
+      }
+    }
+  ],
+  "installation": {
+    "steps": [
+      "1. Ensure n8n is running at http://localhost:5678",
+      "2. Configure environment variables in docker-compose.yml",
+      "3. Set up NetBox and OpenAI credentials in n8n",
+      "4. Import workflows using batch-import.sh or individually",
+      "5. Activate workflows as needed",
+      "6. Test using test-all-workflows.sh"
+    ],
+    "scripts": [
+      {
+        "name": "batch-import.sh",
+        "description": "Import all workflows automatically"
+      },
+      {
+        "name": "test-all-workflows.sh", 
+        "description": "Test all workflows with sample data"
+      }
+    ]
+  },
+  "compatibility": {
+    "n8n_version": "1.0+",
+    "netbox_version": "3.0+",
+    "docker_compose": "2.0+",
+    "openai_api": "v1"
+  }
+}

@@ -1,0 +1,200 @@
+{
+  "name": "Quick Start AI Network",
+  "active": false,
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "ai-quick",
+        "options": {}
+      },
+      "id": "ai-webhook",
+      "name": "AI Network Request",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [200, 300],
+      "webhookId": "ai-quick"
+    },
+    {
+      "parameters": {
+        "values": {
+          "string": [
+            {
+              "name": "user_request",
+              "value": "={{ $json.body.request || $json.body.message || 'No request provided' }}"
+            },
+            {
+              "name": "customer_id",
+              "value": "={{ $env.CUSTOMER_ID || 'default' }}"
+            },
+            {
+              "name": "timestamp",
+              "value": "={{ $now }}"
+            }
+          ]
+        }
+      },
+      "id": "process-request",
+      "name": "Process AI Request",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 1,
+      "position": [400, 300]
+    },
+    {
+      "parameters": {
+        "url": "={{ $env.NETBOX_URL || 'http://localhost:8000' }}/api/dcim/devices/?limit=10",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "httpHeaderAuth": {
+          "name": "Authorization",
+          "value": "Token {{ $env.NETBOX_TOKEN }}"
+        },
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "json"
+            }
+          }
+        }
+      },
+      "id": "get-netbox-context",
+      "name": "Get NetBox Context",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [600, 300]
+    },
+    {
+      "parameters": {
+        "url": "https://api.openai.com/v1/chat/completions",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "httpHeaderAuth": {
+          "name": "Authorization",
+          "value": "Bearer {{ $env.OPENAI_API_KEY }}"
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"model\": \"{{ $env.OPENAI_MODEL || 'gpt-4' }}\",\n  \"messages\": [\n    {\n      \"role\": \"system\",\n      \"content\": \"You are a network automation assistant. Generate Ansible playbooks for network tasks based on NetBox data.\"\n    },\n    {\n      \"role\": \"user\",\n      \"content\": \"User request: {{ $('Process AI Request').item.json.user_request }}\\n\\nNetBox devices context: {{ JSON.stringify($json.results.slice(0, 3)) }}\\n\\nGenerate a simple Ansible playbook for this request.\"\n    }\n  ],\n  \"max_tokens\": 1000,\n  \"temperature\": 0.3\n}",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "json"
+            }
+          }
+        }
+      },
+      "id": "generate-ai-playbook",
+      "name": "Generate AI Playbook",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [800, 300]
+    },
+    {
+      "parameters": {
+        "values": {
+          "string": [
+            {
+              "name": "status",
+              "value": "AI Network Automation Complete ✅"
+            },
+            {
+              "name": "original_request",
+              "value": "={{ $('Process AI Request').item.json.user_request }}"
+            },
+            {
+              "name": "customer_id",
+              "value": "={{ $('Process AI Request').item.json.customer_id }}"
+            },
+            {
+              "name": "devices_analyzed",
+              "value": "={{ $('Get NetBox Context').item.json.count }}"
+            },
+            {
+              "name": "ai_response",
+              "value": "={{ $json.choices[0].message.content }}"
+            },
+            {
+              "name": "tokens_used",
+              "value": "={{ $json.usage.total_tokens }}"
+            },
+            {
+              "name": "generated_at",
+              "value": "={{ $('Process AI Request').item.json.timestamp }}"
+            },
+            {
+              "name": "next_steps",
+              "value": "Review the generated playbook and deploy using your CI/CD pipeline"
+            }
+          ]
+        }
+      },
+      "id": "format-final-response",
+      "name": "Format AI Response",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 1,
+      "position": [1000, 300]
+    }
+  ],
+  "connections": {
+    "AI Network Request": {
+      "main": [
+        [
+          {
+            "node": "Process AI Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Process AI Request": {
+      "main": [
+        [
+          {
+            "node": "Get NetBox Context",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get NetBox Context": {
+      "main": [
+        [
+          {
+            "node": "Generate AI Playbook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate AI Playbook": {
+      "main": [
+        [
+          {
+            "node": "Format AI Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "responseMode": "responseNode",
+    "responseNode": "Format AI Response"
+  },
+  "staticData": null,
+  "tags": [
+    {
+      "createdAt": "2025-08-11T12:00:00.000Z",
+      "updatedAt": "2025-08-11T12:00:00.000Z",
+      "id": "ai-quick",
+      "name": "ai"
+    }
+  ],
+  "triggerCount": 0,
+  "updatedAt": "2025-08-11T12:00:00.000Z",
+  "versionId": "1"
+}

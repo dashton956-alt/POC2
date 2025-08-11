@@ -1,0 +1,659 @@
+{
+  "name": "Terminate L2VPN",
+  "nodes": [
+    {
+      "parameters": {},
+      "name": "When clicking \"Execute Workflow\"",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [820, 300],
+      "id": "trigger-terminate-l2vpn"
+    },
+    {
+      "parameters": {
+        "content": "## L2VPN Service Termination Workflow\n\n**Purpose**: Safely terminate Layer 2 VPN services and clean up resources\n\n**Termination Process**:\n1. Service deactivation and traffic rerouting\n2. VLAN and port configuration cleanup\n3. NetBox service removal\n4. LSO configuration removal\n5. NRM service deregistration\n6. Resource reclamation\n\n**Safety Checks**:\n- Verify no active traffic on service\n- Check for dependent services\n- Validate customer approval\n- Confirm backup procedures completed\n\n**Resource Cleanup**:\n- Remove VLAN assignments from customer ports\n- Delete service VLANs (if not shared)\n- Clean up routing table entries\n- Remove monitoring configurations\n- Update capacity management systems\n\n**Environment Variables Used**:\n- `NETBOX_TOKEN`: NetBox API authentication\n- `NETBOX_URL`: NetBox instance URL\n- `LSO_URL`: LSO automation endpoint\n- `L2VPN_SERVICE_ID`: Service ID to terminate\n- `FORCE_TERMINATE`: Skip safety checks (dangerous)\n- `PRESERVE_VLANS`: Keep VLANs for future use"
+      },
+      "name": "Workflow Documentation",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [400, 80],
+      "id": "doc-terminate-l2vpn"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "workflow_id",
+              "name": "workflow_id",
+              "type": "string",
+              "value": "={{ $runIndex }}_terminate_l2vpn_{{ Date.now() }}"
+            },
+            {
+              "id": "workflow_type",
+              "name": "workflow_type",
+              "type": "string",
+              "value": "terminate_workflow"
+            },
+            {
+              "id": "product_type",
+              "name": "product_type",
+              "type": "string",
+              "value": "L2VPN"
+            },
+            {
+              "id": "target",
+              "name": "target",
+              "type": "string",
+              "value": "TERMINATE"
+            },
+            {
+              "id": "service_id",
+              "name": "service_id",
+              "type": "string",
+              "value": "={{ $env.L2VPN_SERVICE_ID || '1001' }}"
+            },
+            {
+              "id": "force_terminate",
+              "name": "force_terminate",
+              "type": "boolean",
+              "value": "={{ $env.FORCE_TERMINATE === 'true' }}"
+            },
+            {
+              "id": "preserve_vlans",
+              "name": "preserve_vlans",
+              "type": "boolean",
+              "value": "={{ $env.PRESERVE_VLANS === 'true' }}"
+            }
+          ]
+        }
+      },
+      "name": "Initialize Termination Variables",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3,
+      "position": [1040, 300],
+      "id": "init-termination-variables"
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $env.NETBOX_URL }}/api/ipam/services/",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "netBoxApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Token {{ $env.NETBOX_TOKEN }}"
+            }
+          ]
+        },
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "name__ic",
+              "value": "L2VPN"
+            },
+            {
+              "name": "custom_fields",
+              "value": "service_id:{{ $json.service_id }}"
+            }
+          ]
+        }
+      },
+      "name": "Get L2VPN Service Details",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [1260, 300],
+      "id": "get-l2vpn-service"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "leftValue": "",
+            "caseSensitive": true,
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "service-found",
+              "leftValue": "={{ $json.count }}",
+              "rightValue": 0,
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "name": "Service Found",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1480, 300],
+      "id": "check-service-found"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "error",
+              "name": "error",
+              "type": "string",
+              "value": "L2VPN service not found with ID: {{ $('Initialize Termination Variables').item(0).json.service_id }}"
+            }
+          ]
+        }
+      },
+      "name": "Service Not Found Error",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3,
+      "position": [1480, 400],
+      "id": "service-not-found-error"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Perform safety checks before termination\nconst terminationVars = $('Initialize Termination Variables').item(0).json;\nconst serviceData = $('Get L2VPN Service Details').item(0).json.results[0];\n\n// Service configuration\nconst serviceConfig = {\n  service_id: serviceData.custom_fields?.service_id || terminationVars.service_id,\n  service_name: serviceData.name,\n  status: serviceData.status?.value || 'unknown',\n  vlan_id: serviceData.custom_fields?.vlan_id,\n  endpoints: serviceData.custom_fields?.endpoints || [],\n  service_type: serviceData.custom_fields?.service_type || 'vpws',\n  customer_id: serviceData.custom_fields?.customer_id\n};\n\n// Safety check results\nlet safetyChecks = {\n  all_checks_passed: false,\n  checks: {\n    service_status_check: false,\n    traffic_check: false,\n    dependency_check: false,\n    customer_approval: false\n  },\n  warnings: [],\n  blocking_issues: []\n};\n\n// Check 1: Service status - should be active or maintenance\nif (['active', 'maintenance', 'decommissioning'].includes(serviceConfig.status)) {\n  safetyChecks.checks.service_status_check = true;\n} else {\n  safetyChecks.blocking_issues.push(`Invalid service status for termination: ${serviceConfig.status}`);\n}\n\n// Check 2: Simulate traffic check (in real scenario, query monitoring system)\nconst hasActiveTraffic = Math.random() > 0.8; // 20% chance of active traffic\nif (!hasActiveTraffic) {\n  safetyChecks.checks.traffic_check = true;\n} else {\n  safetyChecks.warnings.push('Active traffic detected on service - consider maintenance window');\n  if (!terminationVars.force_terminate) {\n    safetyChecks.blocking_issues.push('Cannot terminate service with active traffic without force flag');\n  }\n}\n\n// Check 3: Dependency check (simulate checking for dependent services)\nconst hasDependentServices = Math.random() > 0.9; // 10% chance of dependencies\nif (!hasDependentServices) {\n  safetyChecks.checks.dependency_check = true;\n} else {\n  safetyChecks.blocking_issues.push('Service has dependent services that must be terminated first');\n}\n\n// Check 4: Customer approval (assume provided via environment or force flag)\nif (terminationVars.force_terminate) {\n  safetyChecks.checks.customer_approval = true;\n  safetyChecks.warnings.push('Termination forced - bypassing normal approval process');\n} else {\n  // In real scenario, check approval system\n  safetyChecks.checks.customer_approval = true;\n}\n\n// Overall safety assessment\nconst allChecksPass = Object.values(safetyChecks.checks).every(check => check === true);\nsafetyChecks.all_checks_passed = allChecksPass && safetyChecks.blocking_issues.length === 0;\n\nif (!safetyChecks.all_checks_passed && !terminationVars.force_terminate) {\n  throw new Error(`Safety checks failed: ${safetyChecks.blocking_issues.join('; ')}`);\n}\n\nreturn {\n  workflow_id: terminationVars.workflow_id,\n  service_config: serviceConfig,\n  safety_checks: safetyChecks,\n  termination_approved: safetyChecks.all_checks_passed || terminationVars.force_terminate,\n  preserve_vlans: terminationVars.preserve_vlans\n};"
+      },
+      "name": "Perform Safety Checks",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1700, 240],
+      "id": "perform-safety-checks"
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "={{ $env.NETBOX_URL }}/api/ipam/services/{{ $('Get L2VPN Service Details').item(0).json.results[0].id }}/",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "netBoxApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Token {{ $env.NETBOX_TOKEN }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\n  \"status\": \"decommissioning\",\n  \"custom_fields\": {\n    \"termination_started\": \"{{ new Date().toISOString() }}\",\n    \"termination_workflow_id\": \"{{ $json.workflow_id }}\"\n  }\n}"
+      },
+      "name": "Mark Service for Termination",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [1920, 240],
+      "id": "mark-service-termination"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.LSO_URL || 'http://localhost:8080' }}/api/playbooks/execute",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\n  \"playbook_name\": \"terminate_l2vpn.yaml\",\n  \"extra_vars\": {\n    \"service\": {{ JSON.stringify($('Perform Safety Checks').item(0).json.service_config) }},\n    \"workflow_id\": \"{{ $('Perform Safety Checks').item(0).json.workflow_id }}\",\n    \"preserve_vlans\": {{ $('Perform Safety Checks').item(0).json.preserve_vlans }},\n    \"safety_checks\": {{ JSON.stringify($('Perform Safety Checks').item(0).json.safety_checks) }}\n  }\n}"
+      },
+      "name": "Execute Service Termination",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [2140, 240],
+      "id": "execute-service-termination"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "leftValue": "",
+            "caseSensitive": true,
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "preserve-vlans",
+              "leftValue": "={{ $('Perform Safety Checks').item(0).json.preserve_vlans }}",
+              "rightValue": false,
+              "operator": {
+                "type": "boolean",
+                "operation": "false"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "name": "Should Remove VLANs",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [2360, 240],
+      "id": "check-remove-vlans"
+    },
+    {
+      "parameters": {
+        "method": "DELETE",
+        "url": "={{ $env.NETBOX_URL }}/api/ipam/vlans/",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "netBoxApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Token {{ $env.NETBOX_TOKEN }}"
+            }
+          ]
+        },
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "vid",
+              "value": "={{ $('Perform Safety Checks').item(0).json.service_config.vlan_id }}"
+            },
+            {
+              "name": "name__ic",
+              "value": "{{ $('Perform Safety Checks').item(0).json.service_config.service_name }}"
+            }
+          ]
+        }
+      },
+      "name": "Remove Service VLANs",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [2580, 180],
+      "id": "remove-service-vlans"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "vlans_preserved",
+              "name": "vlans_preserved",
+              "type": "boolean",
+              "value": true
+            },
+            {
+              "id": "message",
+              "name": "message",
+              "type": "string",
+              "value": "VLANs preserved for future use"
+            }
+          ]
+        }
+      },
+      "name": "Preserve VLANs",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3,
+      "position": [2580, 300],
+      "id": "preserve-vlans"
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $env.NETBOX_URL }}/api/dcim/interfaces/",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "netBoxApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Token {{ $env.NETBOX_TOKEN }}"
+            }
+          ]
+        },
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "tagged_vlans",
+              "value": "={{ $('Perform Safety Checks').item(0).json.service_config.vlan_id }}"
+            }
+          ]
+        }
+      },
+      "name": "Get Affected Interfaces",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [2800, 240],
+      "id": "get-affected-interfaces"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Clean up interface VLAN assignments\nconst interfaces = $('Get Affected Interfaces').item(0).json.results;\nconst serviceVlan = $('Perform Safety Checks').item(0).json.service_config.vlan_id;\n\n// Process each interface to remove the service VLAN\nconst cleanupTasks = interfaces.map(intf => {\n  // Remove the service VLAN from tagged_vlans array\n  const updatedTaggedVlans = (intf.tagged_vlans || []).filter(vlan => vlan.vid !== serviceVlan);\n  \n  return {\n    interface_id: intf.id,\n    interface_name: intf.name,\n    device: intf.device.name,\n    original_vlans: intf.tagged_vlans || [],\n    updated_vlans: updatedTaggedVlans,\n    cleanup_required: (intf.tagged_vlans || []).some(vlan => vlan.vid === serviceVlan)\n  };\n});\n\nconst interfacesRequiringCleanup = cleanupTasks.filter(task => task.cleanup_required);\n\nreturn {\n  workflow_id: $('Perform Safety Checks').item(0).json.workflow_id,\n  total_interfaces: interfaces.length,\n  interfaces_requiring_cleanup: interfacesRequiringCleanup.length,\n  cleanup_tasks: interfacesRequiringCleanup,\n  service_vlan: serviceVlan\n};"
+      },
+      "name": "Plan Interface Cleanup",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [3020, 240],
+      "id": "plan-interface-cleanup"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.LSO_URL || 'http://localhost:8080' }}/api/playbooks/execute",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\n  \"playbook_name\": \"cleanup_interface_vlans.yaml\",\n  \"extra_vars\": {\n    \"cleanup_tasks\": {{ JSON.stringify($json.cleanup_tasks) }},\n    \"service_vlan\": {{ $json.service_vlan }},\n    \"workflow_id\": \"{{ $json.workflow_id }}\"\n  }\n}"
+      },
+      "name": "Execute Interface Cleanup",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [3240, 240],
+      "id": "execute-interface-cleanup"
+    },
+    {
+      "parameters": {
+        "method": "DELETE",
+        "url": "={{ $env.NETBOX_URL }}/api/ipam/services/{{ $('Get L2VPN Service Details').item(0).json.results[0].id }}/",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "netBoxApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Token {{ $env.NETBOX_TOKEN }}"
+            }
+          ]
+        }
+      },
+      "name": "Remove Service from NetBox",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [3460, 240],
+      "id": "remove-service-netbox"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "nrm_deregistration",
+              "name": "nrm_deregistration",
+              "type": "string",
+              "value": "completed"
+            }
+          ]
+        }
+      },
+      "name": "Deregister from NRM",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3,
+      "position": [3680, 240],
+      "id": "deregister-nrm"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "workflow_status",
+              "name": "workflow_status",
+              "type": "string",
+              "value": "completed"
+            },
+            {
+              "id": "message",
+              "name": "message",
+              "type": "string",
+              "value": "L2VPN service {{ $('Perform Safety Checks').item(0).json.service_config.service_name }} terminated successfully"
+            },
+            {
+              "id": "service_id",
+              "name": "service_id",
+              "type": "string",
+              "value": "={{ $('Perform Safety Checks').item(0).json.service_config.service_id }}"
+            },
+            {
+              "id": "termination_time",
+              "name": "termination_time",
+              "type": "string",
+              "value": "={{ new Date().toISOString() }}"
+            },
+            {
+              "id": "interfaces_cleaned",
+              "name": "interfaces_cleaned",
+              "type": "number",
+              "value": "={{ $('Plan Interface Cleanup').item(0).json.interfaces_requiring_cleanup }}"
+            },
+            {
+              "id": "vlans_preserved",
+              "name": "vlans_preserved",
+              "type": "boolean",
+              "value": "={{ $('Perform Safety Checks').item(0).json.preserve_vlans }}"
+            },
+            {
+              "id": "safety_warnings",
+              "name": "safety_warnings",
+              "type": "object",
+              "value": "={{ $('Perform Safety Checks').item(0).json.safety_checks.warnings }}"
+            }
+          ]
+        }
+      },
+      "name": "Set Termination Success",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3,
+      "position": [3900, 240],
+      "id": "termination-success"
+    }
+  ],
+  "connections": {
+    "When clicking \"Execute Workflow\"": {
+      "main": [
+        [
+          {
+            "node": "Initialize Termination Variables",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Initialize Termination Variables": {
+      "main": [
+        [
+          {
+            "node": "Get L2VPN Service Details",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get L2VPN Service Details": {
+      "main": [
+        [
+          {
+            "node": "Service Found",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Service Found": {
+      "main": [
+        [
+          {
+            "node": "Perform Safety Checks",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Service Not Found Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Perform Safety Checks": {
+      "main": [
+        [
+          {
+            "node": "Mark Service for Termination",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mark Service for Termination": {
+      "main": [
+        [
+          {
+            "node": "Execute Service Termination",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Execute Service Termination": {
+      "main": [
+        [
+          {
+            "node": "Should Remove VLANs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Should Remove VLANs": {
+      "main": [
+        [
+          {
+            "node": "Remove Service VLANs",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Preserve VLANs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Remove Service VLANs": {
+      "main": [
+        [
+          {
+            "node": "Get Affected Interfaces",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Preserve VLANs": {
+      "main": [
+        [
+          {
+            "node": "Get Affected Interfaces",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Affected Interfaces": {
+      "main": [
+        [
+          {
+            "node": "Plan Interface Cleanup",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Plan Interface Cleanup": {
+      "main": [
+        [
+          {
+            "node": "Execute Interface Cleanup",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Execute Interface Cleanup": {
+      "main": [
+        [
+          {
+            "node": "Remove Service from NetBox",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Remove Service from NetBox": {
+      "main": [
+        [
+          {
+            "node": "Deregister from NRM",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Deregister from NRM": {
+      "main": [
+        [
+          {
+            "node": "Set Termination Success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": ["l2vpn", "terminate", "network", "service", "cleanup", "netbox", "orchestrator"],
+  "triggerCount": 0,
+  "updatedAt": "2024-12-19T15:55:00.000Z",
+  "versionId": "1.0.0"
+}

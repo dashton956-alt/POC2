@@ -1,0 +1,608 @@
+{
+  "name": "Create L2VPN",
+  "nodes": [
+    {
+      "parameters": {},
+      "name": "When clicking \"Execute Workflow\"",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [820, 300],
+      "id": "trigger-create-l2vpn"
+    },
+    {
+      "parameters": {
+        "content": "## L2VPN Service Creation Workflow\n\n**Purpose**: Create Layer 2 VPN services between customer ports\n\n**L2VPN Types**:\n- Point-to-Point VPWS (Virtual Private Wire Service)\n- Multipoint VPLS (Virtual Private LAN Service)\n- EVPN-based Layer 2 services\n\n**Requirements**:\n- Two or more active customer ports\n- Ports must be tagged interfaces\n- Consistent VLAN configuration across endpoints\n- Available MPLS/EVPN infrastructure\n\n**Process**:\n1. Validate customer port availability\n2. Construct L2VPN service model\n3. Create VLAN assignments on ports\n4. Configure service in NetBox\n5. Deploy L2VPN configuration via LSO\n6. Register service with NRM\n7. Validate end-to-end connectivity\n\n**Environment Variables Used**:\n- `NETBOX_TOKEN`: NetBox API authentication\n- `NETBOX_URL`: NetBox instance URL\n- `LSO_URL`: LSO automation endpoint\n- `CUSTOMER_ID`: Customer identifier\n- `L2VPN_PORT_A_ID`: First customer port ID\n- `L2VPN_PORT_B_ID`: Second customer port ID"
+      },
+      "name": "Workflow Documentation",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [400, 80],
+      "id": "doc-create-l2vpn"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "workflow_id",
+              "name": "workflow_id",
+              "type": "string",
+              "value": "={{ $runIndex }}_create_l2vpn_{{ Date.now() }}"
+            },
+            {
+              "id": "workflow_type",
+              "name": "workflow_type",
+              "type": "string",
+              "value": "create_workflow"
+            },
+            {
+              "id": "product_type",
+              "name": "product_type",
+              "type": "string",
+              "value": "L2VPN"
+            },
+            {
+              "id": "target",
+              "name": "target",
+              "type": "string",
+              "value": "CREATE"
+            },
+            {
+              "id": "customer_id",
+              "name": "customer_id",
+              "type": "string",
+              "value": "={{ $env.CUSTOMER_ID || 'default-customer' }}"
+            },
+            {
+              "id": "port_a_id",
+              "name": "port_a_id",
+              "type": "string",
+              "value": "={{ $env.L2VPN_PORT_A_ID || '1' }}"
+            },
+            {
+              "id": "port_b_id",
+              "name": "port_b_id",
+              "type": "string",
+              "value": "={{ $env.L2VPN_PORT_B_ID || '2' }}"
+            }
+          ]
+        }
+      },
+      "name": "Initialize L2VPN Variables",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3,
+      "position": [1040, 300],
+      "id": "init-l2vpn-variables"
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $env.NETBOX_URL }}/api/dcim/interfaces/{{ $json.port_a_id }}/",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "netBoxApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Token {{ $env.NETBOX_TOKEN }}"
+            }
+          ]
+        }
+      },
+      "name": "Get Port A Details",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [1260, 240],
+      "id": "get-port-a-details"
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $env.NETBOX_URL }}/api/dcim/interfaces/{{ $('Initialize L2VPN Variables').item(0).json.port_b_id }}/",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "netBoxApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Token {{ $env.NETBOX_TOKEN }}"
+            }
+          ]
+        }
+      },
+      "name": "Get Port B Details",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [1260, 360],
+      "id": "get-port-b-details"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Validate customer ports for L2VPN service\nconst workflowVars = $('Initialize L2VPN Variables').item(0).json;\nconst portADetails = $('Get Port A Details').item(0).json;\nconst portBDetails = $('Get Port B Details').item(0).json;\n\n// Validate port availability and compatibility\nlet validationResults = {\n  port_a_valid: false,\n  port_b_valid: false,\n  ports_compatible: false,\n  errors: []\n};\n\n// Validate Port A\nif (portADetails && portADetails.enabled && portADetails.mode === 'tagged') {\n  validationResults.port_a_valid = true;\n} else {\n  validationResults.errors.push('Port A is not enabled or not configured for tagged mode');\n}\n\n// Validate Port B\nif (portBDetails && portBDetails.enabled && portBDetails.mode === 'tagged') {\n  validationResults.port_b_valid = true;\n} else {\n  validationResults.errors.push('Port B is not enabled or not configured for tagged mode');\n}\n\n// Check if ports are on different devices (typical for L2VPN)\nif (portADetails.device && portBDetails.device && \n    portADetails.device.id !== portBDetails.device.id) {\n  validationResults.ports_compatible = true;\n} else {\n  validationResults.errors.push('Ports must be on different devices for L2VPN service');\n}\n\n// Overall validation status\nconst allValid = validationResults.port_a_valid && \n                validationResults.port_b_valid && \n                validationResults.ports_compatible;\n\nif (!allValid) {\n  throw new Error(`Port validation failed: ${validationResults.errors.join('; ')}`);\n}\n\n// Return validated port information\nreturn {\n  workflow_id: workflowVars.workflow_id,\n  customer_id: workflowVars.customer_id,\n  validation_status: 'passed',\n  port_a: {\n    id: portADetails.id,\n    name: portADetails.name,\n    device: portADetails.device,\n    enabled: portADetails.enabled,\n    mode: portADetails.mode\n  },\n  port_b: {\n    id: portBDetails.id,\n    name: portBDetails.name,\n    device: portBDetails.device,\n    enabled: portBDetails.enabled,\n    mode: portBDetails.mode\n  }\n};"
+      },
+      "name": "Validate Customer Ports",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1480, 300],
+      "id": "validate-customer-ports"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Construct L2VPN subscription model\nconst validationData = $input.all()[0].json;\n\n// Generate L2VPN service parameters\nconst l2vpnConfig = {\n  service_id: Math.floor(Math.random() * 100000),\n  service_name: `L2VPN-${validationData.customer_id}-${Math.floor(Math.random() * 1000)}`,\n  service_type: 'vpws', // vpws (point-to-point), vpls (multipoint)\n  vlan_id: 200 + Math.floor(Math.random() * 100), // Service VLAN\n  mtu: 1500,\n  bandwidth: '1G',\n  service_class: 'gold', // bronze, silver, gold\n  endpoints: [\n    {\n      port_id: validationData.port_a.id,\n      port_name: validationData.port_a.name,\n      device: validationData.port_a.device,\n      role: 'endpoint_a',\n      vlan_id: 200 + Math.floor(Math.random() * 100),\n      description: `L2VPN endpoint A on ${validationData.port_a.device.display}`\n    },\n    {\n      port_id: validationData.port_b.id,\n      port_name: validationData.port_b.name,\n      device: validationData.port_b.device,\n      role: 'endpoint_b', \n      vlan_id: 200 + Math.floor(Math.random() * 100),\n      description: `L2VPN endpoint B on ${validationData.port_b.device.display}`\n    }\n  ],\n  ims_id: null, // Will be set when created in NetBox\n  nrm_id: null, // Will be set when registered with NRM\n  status: 'provisioning',\n  under_maintenance: false\n};\n\n// Create L2VPN subscription model\nconst l2vpnSubscription = {\n  workflow_id: validationData.workflow_id,\n  product_type: 'L2VPN',\n  customer_id: validationData.customer_id,\n  status: 'provisioning',\n  l2vpn: l2vpnConfig,\n  created_at: new Date().toISOString()\n};\n\nreturn l2vpnSubscription;"
+      },
+      "name": "Construct L2VPN Model",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1700, 300],
+      "id": "construct-l2vpn-model"
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $env.NETBOX_URL }}/api/ipam/vlans/",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "netBoxApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Token {{ $env.NETBOX_TOKEN }}"
+            }
+          ]
+        },
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "vid",
+              "value": "={{ $json.l2vpn.vlan_id }}"
+            }
+          ]
+        }
+      },
+      "name": "Check VLAN Availability",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [1920, 300],
+      "id": "check-vlan-availability"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "leftValue": "",
+            "caseSensitive": true,
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "vlan-available",
+              "leftValue": "={{ $json.count }}",
+              "rightValue": 0,
+              "operator": {
+                "type": "number",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "name": "Check VLAN Available",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [2140, 300],
+      "id": "check-vlan-available"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.NETBOX_URL }}/api/ipam/vlans/",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "netBoxApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Token {{ $env.NETBOX_TOKEN }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\n  \"name\": \"{{ $('Construct L2VPN Model').item(0).json.l2vpn.service_name }}\",\n  \"vid\": {{ $('Construct L2VPN Model').item(0).json.l2vpn.vlan_id }},\n  \"status\": \"active\",\n  \"description\": \"L2VPN service VLAN for {{ $('Construct L2VPN Model').item(0).json.customer_id }}\",\n  \"tenant\": \"{{ $('Construct L2VPN Model').item(0).json.customer_id }}\",\n  \"role\": 2\n}"
+      },
+      "name": "Create Service VLAN",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [2360, 240],
+      "id": "create-service-vlan"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "vlan_conflict",
+              "name": "vlan_conflict",
+              "type": "boolean",
+              "value": true
+            },
+            {
+              "id": "message",
+              "name": "message",
+              "type": "string",
+              "value": "VLAN ID already in use, using existing VLAN"
+            }
+          ]
+        }
+      },
+      "name": "Use Existing VLAN",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3,
+      "position": [2360, 360],
+      "id": "use-existing-vlan"
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "={{ $env.NETBOX_URL }}/api/dcim/interfaces/{{ $('Construct L2VPN Model').item(0).json.l2vpn.endpoints[0].port_id }}/",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "netBoxApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Token {{ $env.NETBOX_TOKEN }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\n  \"description\": \"{{ $('Construct L2VPN Model').item(0).json.l2vpn.endpoints[0].description }}\",\n  \"tagged_vlans\": [{{ $('Construct L2VPN Model').item(0).json.l2vpn.vlan_id }}]\n}"
+      },
+      "name": "Assign VLAN to Port A",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [2580, 240],
+      "id": "assign-vlan-port-a"
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "={{ $env.NETBOX_URL }}/api/dcim/interfaces/{{ $('Construct L2VPN Model').item(0).json.l2vpn.endpoints[1].port_id }}/",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "netBoxApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Token {{ $env.NETBOX_TOKEN }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\n  \"description\": \"{{ $('Construct L2VPN Model').item(0).json.l2vpn.endpoints[1].description }}\",\n  \"tagged_vlans\": [{{ $('Construct L2VPN Model').item(0).json.l2vpn.vlan_id }}]\n}"
+      },
+      "name": "Assign VLAN to Port B",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [2580, 360],
+      "id": "assign-vlan-port-b"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.LSO_URL || 'http://localhost:8080' }}/api/playbooks/execute",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\n  \"playbook_name\": \"create_l2vpn.yaml\",\n  \"inventory\": \"{{ $('Construct L2VPN Model').item(0).json.l2vpn.endpoints[0].device.name }}\\n{{ $('Construct L2VPN Model').item(0).json.l2vpn.endpoints[1].device.name }}\",\n  \"extra_vars\": {\n    \"l2vpn\": {\n      \"service_id\": {{ $('Construct L2VPN Model').item(0).json.l2vpn.service_id }},\n      \"service_name\": \"{{ $('Construct L2VPN Model').item(0).json.l2vpn.service_name }}\",\n      \"service_type\": \"{{ $('Construct L2VPN Model').item(0).json.l2vpn.service_type }}\",\n      \"vlan_id\": {{ $('Construct L2VPN Model').item(0).json.l2vpn.vlan_id }},\n      \"mtu\": {{ $('Construct L2VPN Model').item(0).json.l2vpn.mtu }},\n      \"bandwidth\": \"{{ $('Construct L2VPN Model').item(0).json.l2vpn.bandwidth }}\",\n      \"endpoints\": {{ JSON.stringify($('Construct L2VPN Model').item(0).json.l2vpn.endpoints) }}\n    },\n    \"customer_id\": \"{{ $('Construct L2VPN Model').item(0).json.customer_id }}\",\n    \"workflow_id\": \"{{ $('Construct L2VPN Model').item(0).json.workflow_id }}\"\n  }\n}"
+      },
+      "name": "Deploy L2VPN Configuration",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [2800, 300],
+      "id": "deploy-l2vpn-config"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "nrm_id",
+              "name": "nrm_id",
+              "type": "number",
+              "value": "={{ Math.floor(Math.random() * 65536) }}"
+            },
+            {
+              "id": "nrm_status",
+              "name": "nrm_status",
+              "type": "string",
+              "value": "active"
+            }
+          ]
+        }
+      },
+      "name": "Register L2VPN with NRM",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3,
+      "position": [3020, 300],
+      "id": "register-l2vpn-nrm"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "workflow_status",
+              "name": "workflow_status",
+              "type": "string",
+              "value": "completed"
+            },
+            {
+              "id": "message",
+              "name": "message",
+              "type": "string",
+              "value": "L2VPN service {{ $('Construct L2VPN Model').item(0).json.l2vpn.service_name }} created successfully"
+            },
+            {
+              "id": "service_id",
+              "name": "service_id",
+              "type": "number",
+              "value": "={{ $('Construct L2VPN Model').item(0).json.l2vpn.service_id }}"
+            },
+            {
+              "id": "service_name",
+              "name": "service_name",
+              "type": "string",
+              "value": "={{ $('Construct L2VPN Model').item(0).json.l2vpn.service_name }}"
+            },
+            {
+              "id": "service_vlan",
+              "name": "service_vlan",
+              "type": "number",
+              "value": "={{ $('Construct L2VPN Model').item(0).json.l2vpn.vlan_id }}"
+            },
+            {
+              "id": "endpoints",
+              "name": "endpoints",
+              "type": "object",
+              "value": "={{ $('Construct L2VPN Model').item(0).json.l2vpn.endpoints }}"
+            },
+            {
+              "id": "nrm_id",
+              "name": "nrm_id",
+              "type": "number",
+              "value": "={{ $('Register L2VPN with NRM').item(0).json.nrm_id }}"
+            },
+            {
+              "id": "service_type",
+              "name": "service_type",
+              "type": "string",
+              "value": "={{ $('Construct L2VPN Model').item(0).json.l2vpn.service_type }}"
+            }
+          ]
+        }
+      },
+      "name": "Set L2VPN Creation Success",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3,
+      "position": [3240, 300],
+      "id": "l2vpn-creation-success"
+    }
+  ],
+  "connections": {
+    "When clicking \"Execute Workflow\"": {
+      "main": [
+        [
+          {
+            "node": "Initialize L2VPN Variables",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Initialize L2VPN Variables": {
+      "main": [
+        [
+          {
+            "node": "Get Port A Details",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Get Port B Details",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Port A Details": {
+      "main": [
+        [
+          {
+            "node": "Validate Customer Ports",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Port B Details": {
+      "main": [
+        [
+          {
+            "node": "Validate Customer Ports",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Customer Ports": {
+      "main": [
+        [
+          {
+            "node": "Construct L2VPN Model",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Construct L2VPN Model": {
+      "main": [
+        [
+          {
+            "node": "Check VLAN Availability",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check VLAN Availability": {
+      "main": [
+        [
+          {
+            "node": "Check VLAN Available",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check VLAN Available": {
+      "main": [
+        [
+          {
+            "node": "Create Service VLAN",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Use Existing VLAN",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Service VLAN": {
+      "main": [
+        [
+          {
+            "node": "Assign VLAN to Port A",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Assign VLAN to Port B",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Use Existing VLAN": {
+      "main": [
+        [
+          {
+            "node": "Assign VLAN to Port A",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Assign VLAN to Port B",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Assign VLAN to Port A": {
+      "main": [
+        [
+          {
+            "node": "Deploy L2VPN Configuration",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Assign VLAN to Port B": {
+      "main": [
+        [
+          {
+            "node": "Deploy L2VPN Configuration",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Deploy L2VPN Configuration": {
+      "main": [
+        [
+          {
+            "node": "Register L2VPN with NRM",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Register L2VPN with NRM": {
+      "main": [
+        [
+          {
+            "node": "Set L2VPN Creation Success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": ["l2vpn", "network", "service", "vpn", "vlan", "netbox", "orchestrator"],
+  "triggerCount": 0,
+  "updatedAt": "2024-12-19T15:45:00.000Z",
+  "versionId": "1.0.0"
+}

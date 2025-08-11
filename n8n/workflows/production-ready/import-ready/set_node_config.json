@@ -1,0 +1,71 @@
+{
+  "name": "Set",
+  "type": "n8n-nodes-base.set",
+  "position": [
+    500,
+    300
+  ],
+  "parameters": {
+    "values": {
+      "string": [
+        {
+          "name": "change_number",
+          "value": "={{$json['change_number']}}"
+        },
+        {
+          "name": "timestamp",
+          "value": "={{$now.toISO()}}"
+        },
+        {
+          "name": "user_id",
+          "value": "={{$json['headers']['x-user-id'] || 'system'}}"
+        },
+        {
+          "name": "request_source",
+          "value": "={{$json['headers']['user-agent'] || 'direct'}}"
+        },
+        {
+          "name": "workflow_id",
+          "value": "={{$executionId}}"
+        },
+        {
+          "name": "priority",
+          "value": "={{$json['priority'] || 'medium'}}"
+        },
+        {
+          "name": "environment",
+          "value": "={{$json['environment'] || 'production'}}"
+        },
+        {
+          "name": "intent_type",
+          "value": "={{$json['intent']['type'] || 'unknown'}}"
+        },
+        {
+          "name": "device_ip",
+          "value": "={{$json['intent']['device_ip'] || ''}}"
+        },
+        {
+          "name": "notification_recipients",
+          "value": "={{$json['intent']['notification_recipients'] || 'admin@company.com'}}"
+        }
+      ],
+      "number": [
+        {
+          "name": "execution_start_time",
+          "value": "={{Date.now()}}"
+        }
+      ],
+      "boolean": [
+        {
+          "name": "rollback_available",
+          "value": true
+        },
+        {
+          "name": "audit_required",
+          "value": true
+        }
+      ]
+    },
+    "keepOnlySet": false
+  }
+}

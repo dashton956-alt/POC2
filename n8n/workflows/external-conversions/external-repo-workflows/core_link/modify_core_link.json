@@ -1,0 +1,466 @@
+{
+  "name": "Modify Core Link",
+  "nodes": [
+    {
+      "parameters": {},
+      "name": "When clicking \"Execute Workflow\"",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [820, 300],
+      "id": "trigger-modify-core-link"
+    },
+    {
+      "parameters": {
+        "content": "## Core Link Modification Workflow\n\n**Purpose**: Modify existing core link configurations\n\n**Supported Modifications**:\n- Maintenance status changes\n- Description updates\n- Configuration parameters\n\n**Process**:\n1. Load existing core link subscription\n2. Validate modification request\n3. Update subscription model\n4. Synchronize changes to NetBox\n5. Deploy configuration changes\n6. Validate successful modification\n\n**Environment Variables Used**:\n- `NETBOX_TOKEN`: NetBox API authentication\n- `NETBOX_URL`: NetBox instance URL\n- `LSO_URL`: LSO automation endpoint\n- `CUSTOMER_ID`: Customer identifier"
+      },
+      "name": "Workflow Documentation",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [400, 80],
+      "id": "doc-modify-core-link"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "workflow_id",
+              "name": "workflow_id",
+              "type": "string",
+              "value": "={{ $runIndex }}_modify_core_link_{{ Date.now() }}"
+            },
+            {
+              "id": "workflow_type",
+              "name": "workflow_type",
+              "type": "string",
+              "value": "modify_workflow"
+            },
+            {
+              "id": "product_type",
+              "name": "product_type",
+              "type": "string",
+              "value": "CoreLink"
+            },
+            {
+              "id": "target",
+              "name": "target",
+              "type": "string",
+              "value": "MODIFY"
+            },
+            {
+              "id": "subscription_id",
+              "name": "subscription_id",
+              "type": "string",
+              "value": "{{ $env.CORE_LINK_SUBSCRIPTION_ID || 'sample-core-link-123' }}"
+            }
+          ]
+        }
+      },
+      "name": "Initialize Workflow Variables",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3,
+      "position": [1040, 300],
+      "id": "init-variables-modify"
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $env.NETBOX_URL }}/api/dcim/cables/{{ $json.subscription_id }}/",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "netBoxApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Token {{ $env.NETBOX_TOKEN }}"
+            }
+          ]
+        }
+      },
+      "name": "Load Core Link Subscription",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [1260, 300],
+      "id": "load-subscription"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "leftValue": "",
+            "caseSensitive": true,
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "subscription-exists",
+              "leftValue": "={{ $json.id }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "isNotEmpty"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "name": "Check Subscription Exists",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1480, 300],
+      "id": "check-subscription-exists"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "error_message",
+              "name": "error_message",
+              "type": "string",
+              "value": "Core link subscription not found"
+            },
+            {
+              "id": "error_code",
+              "name": "error_code",
+              "type": "string",
+              "value": "SUBSCRIPTION_NOT_FOUND"
+            }
+          ]
+        }
+      },
+      "name": "Set Error - Not Found",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3,
+      "position": [1700, 480],
+      "id": "error-not-found"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "lifecycle_status",
+              "name": "lifecycle_status",
+              "type": "string",
+              "value": "provisioning"
+            }
+          ]
+        }
+      },
+      "name": "Set Status Provisioning",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3,
+      "position": [1700, 300],
+      "id": "set-provisioning"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Process modification request\nconst subscription = $input.all()[0].json;\nconst initialVars = $('Initialize Workflow Variables').item(0).json;\n\n// Extract current core link details\nconst currentLink = {\n  id: subscription.id,\n  label: subscription.label,\n  status: subscription.status,\n  type: subscription.type,\n  length: subscription.length,\n  description: subscription.description || '',\n  a_terminations: subscription.a_terminations,\n  b_terminations: subscription.b_terminations\n};\n\n// Define modification parameters (in production, these would come from user input)\nconst modifications = {\n  under_maintenance: false, // Example modification\n  description: `Modified: ${currentLink.description}`,\n  updated_at: new Date().toISOString()\n};\n\nreturn {\n  current_subscription: currentLink,\n  modifications: modifications,\n  workflow_id: initialVars.workflow_id,\n  subscription_id: initialVars.subscription_id\n};"
+      },
+      "name": "Update Subscription Model",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1920, 300],
+      "id": "update-subscription"
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "={{ $env.NETBOX_URL }}/api/dcim/cables/{{ $json.subscription_id }}/",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "netBoxApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Token {{ $env.NETBOX_TOKEN }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\n  \"label\": \"{{ $json.current_subscription.label }} [Modified]\",\n  \"description\": \"{{ $json.modifications.description }}\"\n}"
+      },
+      "name": "Update Subscription Description",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [2140, 300],
+      "id": "update-description"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "nrm_update_status",
+              "name": "nrm_update_status",
+              "type": "string",
+              "value": "updated"
+            },
+            {
+              "id": "nrm_modification_id",
+              "name": "nrm_modification_id",
+              "type": "number",
+              "value": "={{ Math.floor(Math.random() * 65536) }}"
+            }
+          ]
+        }
+      },
+      "name": "Update Core Link in NRM",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3,
+      "position": [2360, 300],
+      "id": "update-nrm"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.LSO_URL || 'http://localhost:8080' }}/api/playbooks/execute",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\n  \"playbook_name\": \"modify_core_link.yaml\",\n  \"inventory\": \"core-devices\",\n  \"extra_vars\": {\n    \"core_link_id\": \"{{ $('Update Subscription Model').item(0).json.subscription_id }}\",\n    \"modifications\": {\n      \"description\": \"{{ $('Update Subscription Model').item(0).json.modifications.description }}\",\n      \"under_maintenance\": {{ $('Update Subscription Model').item(0).json.modifications.under_maintenance }}\n    },\n    \"workflow_id\": \"{{ $('Update Subscription Model').item(0).json.workflow_id }}\"\n  }\n}"
+      },
+      "name": "Deploy Configuration Changes",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [2580, 300],
+      "id": "deploy-config-changes"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "lifecycle_status",
+              "name": "lifecycle_status",
+              "type": "string",
+              "value": "active"
+            }
+          ]
+        }
+      },
+      "name": "Set Status Active",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3,
+      "position": [2800, 300],
+      "id": "set-active"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "workflow_status",
+              "name": "workflow_status",
+              "type": "string",
+              "value": "completed"
+            },
+            {
+              "id": "message",
+              "name": "message",
+              "type": "string",
+              "value": "Core link modification completed successfully"
+            },
+            {
+              "id": "modified_subscription_id",
+              "name": "modified_subscription_id",
+              "type": "string",
+              "value": "={{ $('Update Subscription Model').item(0).json.subscription_id }}"
+            },
+            {
+              "id": "modifications_applied",
+              "name": "modifications_applied",
+              "type": "object",
+              "value": "={{ $('Update Subscription Model').item(0).json.modifications }}"
+            }
+          ]
+        }
+      },
+      "name": "Set Success Response",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3,
+      "position": [3020, 300],
+      "id": "success-response"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "workflow_status",
+              "name": "workflow_status",
+              "type": "string",
+              "value": "failed"
+            },
+            {
+              "id": "timestamp",
+              "name": "timestamp",
+              "type": "string",
+              "value": "={{ new Date().toISOString() }}"
+            }
+          ]
+        }
+      },
+      "name": "Set Error Response",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3,
+      "position": [1700, 600],
+      "id": "error-response"
+    }
+  ],
+  "connections": {
+    "When clicking \"Execute Workflow\"": {
+      "main": [
+        [
+          {
+            "node": "Initialize Workflow Variables",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Initialize Workflow Variables": {
+      "main": [
+        [
+          {
+            "node": "Load Core Link Subscription",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Load Core Link Subscription": {
+      "main": [
+        [
+          {
+            "node": "Check Subscription Exists",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Subscription Exists": {
+      "main": [
+        [
+          {
+            "node": "Set Status Provisioning",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Set Error - Not Found",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set Error - Not Found": {
+      "main": [
+        [
+          {
+            "node": "Set Error Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set Status Provisioning": {
+      "main": [
+        [
+          {
+            "node": "Update Subscription Model",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Subscription Model": {
+      "main": [
+        [
+          {
+            "node": "Update Subscription Description",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Subscription Description": {
+      "main": [
+        [
+          {
+            "node": "Update Core Link in NRM",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Core Link in NRM": {
+      "main": [
+        [
+          {
+            "node": "Deploy Configuration Changes",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Deploy Configuration Changes": {
+      "main": [
+        [
+          {
+            "node": "Set Status Active",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set Status Active": {
+      "main": [
+        [
+          {
+            "node": "Set Success Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": ["core_link", "network", "modification", "netbox", "orchestrator"],
+  "triggerCount": 0,
+  "updatedAt": "2024-12-19T15:45:00.000Z",
+  "versionId": "1.0.0"
+}

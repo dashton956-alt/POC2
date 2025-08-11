@@ -1,0 +1,777 @@
+{
+  "name": "Create Core Link",
+  "nodes": [
+    {
+      "parameters": {},
+      "name": "When clicking \"Execute Workflow\"",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [820, 300],
+      "id": "trigger-create-core-link"
+    },
+    {
+      "parameters": {
+        "content": "## Core Link Creation Workflow\n\n**Purpose**: Create point-to-point network core links between nodes\n\n**Requirements**:\n- Two active network nodes (A and B sides)\n- Available ports on each node\n- IPv6 addressing scheme\n\n**Process**:\n1. Select source and destination nodes\n2. Choose available ports on each side\n3. Assign IPv6 prefix and addresses\n4. Configure link in NetBox\n5. Deploy configuration via LSO/Ansible\n6. Validate connectivity\n\n**Environment Variables Used**:\n- `NETBOX_TOKEN`: NetBox API authentication\n- `NETBOX_URL`: NetBox instance URL\n- `LSO_URL`: LSO automation endpoint\n- `CUSTOMER_ID`: Customer identifier"
+      },
+      "name": "Workflow Documentation",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [400, 80],
+      "id": "doc-create-core-link"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "workflow_id",
+              "name": "workflow_id",
+              "type": "string",
+              "value": "={{ $runIndex }}_create_core_link_{{ Date.now() }}"
+            },
+            {
+              "id": "workflow_type",
+              "name": "workflow_type",
+              "type": "string",
+              "value": "create_workflow"
+            },
+            {
+              "id": "product_type",
+              "name": "product_type",
+              "type": "string",
+              "value": "CoreLink"
+            },
+            {
+              "id": "target",
+              "name": "target",
+              "type": "string",
+              "value": "CREATE"
+            },
+            {
+              "id": "customer_id",
+              "name": "customer_id",
+              "type": "string",
+              "value": "={{ $env.CUSTOMER_ID || 'default-customer' }}"
+            }
+          ]
+        }
+      },
+      "name": "Initialize Workflow Variables",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3,
+      "position": [1040, 300],
+      "id": "init-variables-create-core-link"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.NETBOX_URL }}/api/dcim/devices/",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "netBoxApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Token {{ $env.NETBOX_TOKEN }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "status",
+              "value": "active"
+            },
+            {
+              "name": "role",
+              "value": "core"
+            }
+          ]
+        }
+      },
+      "name": "Get Available Core Nodes",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [1260, 300],
+      "id": "get-core-nodes"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "leftValue": "",
+            "caseSensitive": true,
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "nodes-available",
+              "leftValue": "={{ $json.count }}",
+              "rightValue": 2,
+              "operator": {
+                "type": "number",
+                "operation": "gte"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "name": "Check Node Availability",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1480, 300],
+      "id": "check-node-availability"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "error_message",
+              "name": "error_message",
+              "type": "string",
+              "value": "Insufficient core nodes available. Need at least 2 active core nodes."
+            },
+            {
+              "id": "error_code",
+              "name": "error_code",
+              "type": "string",
+              "value": "INSUFFICIENT_NODES"
+            }
+          ]
+        }
+      },
+      "name": "Set Error - Insufficient Nodes",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3,
+      "position": [1700, 480],
+      "id": "error-insufficient-nodes"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Select two different nodes for core link creation\nconst nodes = $input.all()[0].json.results;\n\nif (nodes.length < 2) {\n  throw new Error('Need at least 2 nodes for core link');\n}\n\n// Select first two available nodes (in production, this would be user-selected)\nconst nodeA = nodes[0];\nconst nodeB = nodes[1];\n\n// Ensure nodes are different\nif (nodeA.id === nodeB.id) {\n  throw new Error('Node A and Node B must be different');\n}\n\nreturn {\n  node_a: {\n    id: nodeA.id,\n    name: nodeA.name,\n    site: nodeA.site\n  },\n  node_b: {\n    id: nodeB.id, \n    name: nodeB.name,\n    site: nodeB.site\n  },\n  core_link_name: `${nodeA.name}-${nodeB.name}`,\n  workflow_id: $('Initialize Workflow Variables').item(0).json.workflow_id\n};"
+      },
+      "name": "Select Node Pair",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1700, 300],
+      "id": "select-node-pair"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.NETBOX_URL }}/api/dcim/interfaces/",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "netBoxApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Token {{ $env.NETBOX_TOKEN }}"
+            }
+          ]
+        },
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "device_id",
+              "value": "={{ $json.node_a.id }}"
+            },
+            {
+              "name": "enabled",
+              "value": "true"
+            },
+            {
+              "name": "connected",
+              "value": "false"
+            }
+          ]
+        }
+      },
+      "name": "Get Available Ports Node A",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [1920, 240],
+      "id": "get-ports-node-a"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.NETBOX_URL }}/api/dcim/interfaces/",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "netBoxApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Token {{ $env.NETBOX_TOKEN }}"
+            }
+          ]
+        },
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "device_id",
+              "value": "={{ $('Select Node Pair').item(0).json.node_b.id }}"
+            },
+            {
+              "name": "enabled",
+              "value": "true"
+            },
+            {
+              "name": "connected",
+              "value": "false"
+            }
+          ]
+        }
+      },
+      "name": "Get Available Ports Node B",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [1920, 360],
+      "id": "get-ports-node-b"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Select compatible ports from both nodes\nconst nodeA = $('Select Node Pair').item(0).json.node_a;\nconst nodeB = $('Select Node Pair').item(0).json.node_b;\nconst portsNodeA = $('Get Available Ports Node A').item(0).json.results;\nconst portsNodeB = $('Get Available Ports Node B').item(0).json.results;\n\nif (portsNodeA.length === 0 || portsNodeB.length === 0) {\n  throw new Error('No available ports found on one or both nodes');\n}\n\n// Select first available port on each node (in production, user would select)\nconst portA = portsNodeA[0];\nconst portB = portsNodeB[0];\n\nreturn {\n  node_a: nodeA,\n  node_b: nodeB,\n  port_a: {\n    id: portA.id,\n    name: portA.name,\n    device: portA.device,\n    type: portA.type\n  },\n  port_b: {\n    id: portB.id,\n    name: portB.name, \n    device: portB.device,\n    type: portB.type\n  },\n  core_link_name: `${nodeA.name}-${nodeB.name}`,\n  under_maintenance: false,\n  workflow_id: $('Initialize Workflow Variables').item(0).json.workflow_id\n};"
+      },
+      "name": "Construct Core Link Model",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2140, 300],
+      "id": "construct-core-link-model"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.NETBOX_URL }}/api/ipam/prefixes/",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "netBoxApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Token {{ $env.NETBOX_TOKEN }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\n  \"prefix\": \"2001:db8::/127\",\n  \"description\": \"Core link {{ $json.core_link_name }}\",\n  \"status\": \"active\",\n  \"role\": \"loopback\",\n  \"tenant\": \"{{ $env.CUSTOMER_ID }}\"\n}"
+      },
+      "name": "Assign IPv6 Prefix",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [2360, 300],
+      "id": "assign-ipv6-prefix"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.NETBOX_URL }}/api/ipam/ip-addresses/",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "netBoxApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Token {{ $env.NETBOX_TOKEN }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\n  \"address\": \"2001:db8::0/127\",\n  \"description\": \"{{ $('Construct Core Link Model').item(0).json.node_a.name }} side of core link\",\n  \"assigned_object_type\": \"dcim.interface\",\n  \"assigned_object_id\": {{ $('Construct Core Link Model').item(0).json.port_a.id }}\n}"
+      },
+      "name": "Assign Side A IPv6 Address",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [2580, 240],
+      "id": "assign-side-a-ipv6"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.NETBOX_URL }}/api/ipam/ip-addresses/",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "netBoxApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Token {{ $env.NETBOX_TOKEN }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\n  \"address\": \"2001:db8::1/127\",\n  \"description\": \"{{ $('Construct Core Link Model').item(0).json.node_b.name }} side of core link\",\n  \"assigned_object_type\": \"dcim.interface\",\n  \"assigned_object_id\": {{ $('Construct Core Link Model').item(0).json.port_b.id }}\n}"
+      },
+      "name": "Assign Side B IPv6 Address",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [2580, 360],
+      "id": "assign-side-b-ipv6"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.NETBOX_URL }}/api/dcim/cables/",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "netBoxApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Token {{ $env.NETBOX_TOKEN }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\n  \"a_terminations\": [\n    {\n      \"object_type\": \"dcim.interface\",\n      \"object_id\": {{ $('Construct Core Link Model').item(0).json.port_a.id }}\n    }\n  ],\n  \"b_terminations\": [\n    {\n      \"object_type\": \"dcim.interface\", \n      \"object_id\": {{ $('Construct Core Link Model').item(0).json.port_b.id }}\n    }\n  ],\n  \"label\": \"{{ $('Construct Core Link Model').item(0).json.core_link_name }}\",\n  \"status\": \"connected\",\n  \"type\": \"mmf\",\n  \"length\": 1,\n  \"length_unit\": \"m\"\n}"
+      },
+      "name": "Connect Ports in NetBox",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [2800, 300],
+      "id": "connect-ports-netbox"
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "={{ $env.NETBOX_URL }}/api/dcim/interfaces/{{ $('Construct Core Link Model').item(0).json.port_a.id }}/",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "netBoxApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Token {{ $env.NETBOX_TOKEN }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\n  \"enabled\": true,\n  \"description\": \"Core link to {{ $('Construct Core Link Model').item(0).json.node_b.name }}\"\n}"
+      },
+      "name": "Enable Port A in NetBox",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [3020, 240],
+      "id": "enable-port-a"
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "={{ $env.NETBOX_URL }}/api/dcim/interfaces/{{ $('Construct Core Link Model').item(0).json.port_b.id }}/",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "netBoxApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Token {{ $env.NETBOX_TOKEN }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\n  \"enabled\": true,\n  \"description\": \"Core link to {{ $('Construct Core Link Model').item(0).json.node_a.name }}\"\n}"
+      },
+      "name": "Enable Port B in NetBox",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [3020, 360],
+      "id": "enable-port-b"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "nrm_id_port_a",
+              "name": "nrm_id_port_a",
+              "type": "number",
+              "value": "={{ Math.floor(Math.random() * 65536) }}"
+            },
+            {
+              "id": "nrm_id_port_b", 
+              "name": "nrm_id_port_b",
+              "type": "number",
+              "value": "={{ Math.floor(Math.random() * 65536) }}"
+            },
+            {
+              "id": "nrm_id_core_link",
+              "name": "nrm_id_core_link",
+              "type": "number",
+              "value": "={{ Math.floor(Math.random() * 65536) }}"
+            }
+          ]
+        }
+      },
+      "name": "Provision Core Link in NRM",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3,
+      "position": [3240, 300],
+      "id": "provision-nrm"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.LSO_URL || 'http://localhost:8080' }}/api/playbooks/execute",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\n  \"playbook_name\": \"create_core_link.yaml\",\n  \"inventory\": \"{{ $('Construct Core Link Model').item(0).json.node_a.name }}\\n{{ $('Construct Core Link Model').item(0).json.node_b.name }}\",\n  \"extra_vars\": {\n    \"core_link\": {\n      \"name\": \"{{ $('Construct Core Link Model').item(0).json.core_link_name }}\",\n      \"node_a\": {\n        \"name\": \"{{ $('Construct Core Link Model').item(0).json.node_a.name }}\",\n        \"port\": \"{{ $('Construct Core Link Model').item(0).json.port_a.name }}\"\n      },\n      \"node_b\": {\n        \"name\": \"{{ $('Construct Core Link Model').item(0).json.node_b.name }}\",\n        \"port\": \"{{ $('Construct Core Link Model').item(0).json.port_b.name }}\"\n      },\n      \"ipv6_prefix\": \"2001:db8::/127\"\n    }\n  }\n}"
+      },
+      "name": "Install Core Link Config",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [3460, 300],
+      "id": "install-config"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "workflow_status",
+              "name": "workflow_status",
+              "type": "string",
+              "value": "completed"
+            },
+            {
+              "id": "core_link_id",
+              "name": "core_link_id",
+              "type": "number",
+              "value": "={{ $('Connect Ports in NetBox').item(0).json.id }}"
+            },
+            {
+              "id": "message",
+              "name": "message",
+              "type": "string",
+              "value": "Core link {{ $('Construct Core Link Model').item(0).json.core_link_name }} created successfully"
+            },
+            {
+              "id": "ipv6_prefix_id",
+              "name": "ipv6_prefix_id",
+              "type": "number",
+              "value": "={{ $('Assign IPv6 Prefix').item(0).json.id }}"
+            },
+            {
+              "id": "side_a_ipv6_id",
+              "name": "side_a_ipv6_id",
+              "type": "number",
+              "value": "={{ $('Assign Side A IPv6 Address').item(0).json.id }}"
+            },
+            {
+              "id": "side_b_ipv6_id",
+              "name": "side_b_ipv6_id",
+              "type": "number",
+              "value": "={{ $('Assign Side B IPv6 Address').item(0).json.id }}"
+            }
+          ]
+        }
+      },
+      "name": "Set Success Response",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3,
+      "position": [3680, 300],
+      "id": "success-response"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "workflow_status",
+              "name": "workflow_status",
+              "type": "string",
+              "value": "failed"
+            },
+            {
+              "id": "timestamp",
+              "name": "timestamp",
+              "type": "string",
+              "value": "={{ new Date().toISOString() }}"
+            }
+          ]
+        }
+      },
+      "name": "Set Error Response",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3,
+      "position": [1700, 600],
+      "id": "error-response"
+    }
+  ],
+  "connections": {
+    "When clicking \"Execute Workflow\"": {
+      "main": [
+        [
+          {
+            "node": "Initialize Workflow Variables",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Initialize Workflow Variables": {
+      "main": [
+        [
+          {
+            "node": "Get Available Core Nodes",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Available Core Nodes": {
+      "main": [
+        [
+          {
+            "node": "Check Node Availability",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Node Availability": {
+      "main": [
+        [
+          {
+            "node": "Select Node Pair",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Set Error - Insufficient Nodes",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set Error - Insufficient Nodes": {
+      "main": [
+        [
+          {
+            "node": "Set Error Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Select Node Pair": {
+      "main": [
+        [
+          {
+            "node": "Get Available Ports Node A",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Get Available Ports Node B",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Available Ports Node A": {
+      "main": [
+        [
+          {
+            "node": "Construct Core Link Model",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Available Ports Node B": {
+      "main": [
+        [
+          {
+            "node": "Construct Core Link Model",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Construct Core Link Model": {
+      "main": [
+        [
+          {
+            "node": "Assign IPv6 Prefix",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Assign IPv6 Prefix": {
+      "main": [
+        [
+          {
+            "node": "Assign Side A IPv6 Address",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Assign Side B IPv6 Address",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Assign Side A IPv6 Address": {
+      "main": [
+        [
+          {
+            "node": "Connect Ports in NetBox",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Assign Side B IPv6 Address": {
+      "main": [
+        [
+          {
+            "node": "Connect Ports in NetBox",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Connect Ports in NetBox": {
+      "main": [
+        [
+          {
+            "node": "Enable Port A in NetBox",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Enable Port B in NetBox",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Enable Port A in NetBox": {
+      "main": [
+        [
+          {
+            "node": "Provision Core Link in NRM",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Enable Port B in NetBox": {
+      "main": [
+        [
+          {
+            "node": "Provision Core Link in NRM",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Provision Core Link in NRM": {
+      "main": [
+        [
+          {
+            "node": "Install Core Link Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Install Core Link Config": {
+      "main": [
+        [
+          {
+            "node": "Set Success Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": ["core_link", "network", "automation", "netbox", "orchestrator"],
+  "triggerCount": 0,
+  "updatedAt": "2024-12-19T15:45:00.000Z",
+  "versionId": "1.0.0"
+}

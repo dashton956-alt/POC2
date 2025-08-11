@@ -1,0 +1,241 @@
+{
+  "name": "Network Operations",
+  "nodes": [
+    {
+      "parameters": {},
+      "name": "When clicking \"Execute Workflow\"",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [820, 300],
+      "id": "trigger-network-operations"
+    },
+    {
+      "parameters": {
+        "content": "## Network Operations Workflow\n\n**Purpose**: Centralized network operations and maintenance tasks\n\n**Operation Categories**:\n1. **Monitoring Operations**\n   - Health checks and status monitoring\n   - Performance metrics collection\n   - SLA compliance monitoring\n   - Alert management and escalation\n\n2. **Maintenance Operations**\n   - Scheduled maintenance windows\n   - Configuration backups\n   - Software updates and patches\n   - Capacity planning analysis\n\n3. **Incident Response**\n   - Automated incident detection\n   - Root cause analysis\n   - Service restoration procedures\n   - Post-incident reporting\n\n4. **Compliance Operations**\n   - Security policy validation\n   - Audit trail maintenance\n   - Regulatory compliance checks\n   - Documentation updates\n\n**Process Flow**:\n1. Determine operation type and scope\n2. Validate operational prerequisites\n3. Execute operation procedures\n4. Monitor execution progress\n5. Validate operation success\n6. Generate operational reports\n7. Update operational dashboards\n\n**Environment Variables Used**:\n- `NETBOX_TOKEN`: NetBox API authentication\n- `NETBOX_URL`: NetBox instance URL\n- `MONITORING_URL`: Monitoring system URL\n- `OPERATION_TYPE`: Type of operation to perform\n- `OPERATION_SCOPE`: Scope of operation (site, device, service)\n- `MAINTENANCE_WINDOW`: Scheduled maintenance window"
+      },
+      "name": "Workflow Documentation",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [400, 80],
+      "id": "doc-network-operations"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "workflow_id",
+              "name": "workflow_id",
+              "type": "string",
+              "value": "={{ $runIndex }}_network_ops_{{ Date.now() }}"
+            },
+            {
+              "id": "workflow_type",
+              "name": "workflow_type",
+              "type": "string",
+              "value": "operations_workflow"
+            },
+            {
+              "id": "operation_type",
+              "name": "operation_type",
+              "type": "string",
+              "value": "={{ $env.OPERATION_TYPE || 'health_check' }}"
+            },
+            {
+              "id": "operation_scope",
+              "name": "operation_scope",
+              "type": "string",
+              "value": "={{ $env.OPERATION_SCOPE || 'all_devices' }}"
+            },
+            {
+              "id": "maintenance_window",
+              "name": "maintenance_window",
+              "type": "boolean",
+              "value": "={{ $env.MAINTENANCE_WINDOW === 'true' }}"
+            }
+          ]
+        }
+      },
+      "name": "Initialize Operations Variables",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3,
+      "position": [1040, 300],
+      "id": "init-operations-variables"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "leftValue": "",
+            "caseSensitive": true,
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "health-check",
+              "leftValue": "={{ $json.operation_type }}",
+              "rightValue": "health_check",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "name": "Is Health Check Operation",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1260, 300],
+      "id": "check-health-check-operation"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Perform comprehensive health check operations\nconst opsVars = $input.all()[0].json;\n\n// Simulate health check results\nconst healthCheckResults = {\n  operation_id: opsVars.workflow_id,\n  operation_type: 'health_check',\n  scope: opsVars.operation_scope,\n  timestamp: new Date().toISOString(),\n  checks_performed: {\n    device_connectivity: {\n      total_devices: 125,\n      reachable: 123,\n      unreachable: 2,\n      status: 'warning',\n      unreachable_devices: ['switch-01-floor3', 'router-branch-05']\n    },\n    interface_status: {\n      total_interfaces: 2450,\n      up: 2380,\n      down: 70,\n      status: 'normal',\n      critical_down: 3 // Uplink interfaces down\n    },\n    service_status: {\n      total_services: 85,\n      active: 82,\n      degraded: 3,\n      failed: 0,\n      status: 'warning',\n      degraded_services: ['l2vpn-customer-001', 'bgp-peer-isp2', 'dns-secondary']\n    },\n    performance_metrics: {\n      cpu_utilization: {\n        average: 35,\n        max: 78,\n        devices_over_threshold: 5,\n        threshold: 80,\n        status: 'normal'\n      },\n      memory_utilization: {\n        average: 42,\n        max: 85,\n        devices_over_threshold: 2,\n        threshold: 90,\n        status: 'normal'\n      },\n      bandwidth_utilization: {\n        average: 28,\n        max: 92,\n        links_over_threshold: 1,\n        threshold: 85,\n        status: 'warning'\n      }\n    },\n    security_status: {\n      access_violations: 0,\n      failed_logins: 3,\n      certificate_expiry: {\n        expiring_soon: 2,\n        expired: 0,\n        days_threshold: 30\n      },\n      status: 'normal'\n    }\n  },\n  overall_status: 'warning', // normal, warning, critical\n  issues_found: 8,\n  critical_issues: 0,\n  warnings: 8,\n  recommendations: [\n    'Investigate connectivity issues with switch-01-floor3 and router-branch-05',\n    'Monitor bandwidth utilization on core link to ISP-1',\n    'Schedule certificate renewal for 2 certificates expiring within 30 days',\n    'Review degraded L2VPN service for customer-001'\n  ]\n};\n\nreturn {\n  ...opsVars,\n  health_check_results: healthCheckResults\n};"
+      },
+      "name": "Perform Health Check",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1480, 240],
+      "id": "perform-health-check"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Perform other network operations\nconst opsVars = $input.all()[0].json;\n\n// Simulate other operation results based on operation type\nlet operationResults = {\n  operation_id: opsVars.workflow_id,\n  operation_type: opsVars.operation_type,\n  scope: opsVars.operation_scope,\n  timestamp: new Date().toISOString(),\n  status: 'completed'\n};\n\nswitch (opsVars.operation_type) {\n  case 'backup':\n    operationResults = {\n      ...operationResults,\n      backup_results: {\n        devices_backed_up: 125,\n        successful_backups: 123,\n        failed_backups: 2,\n        backup_size_mb: 450,\n        backup_duration_minutes: 15\n      }\n    };\n    break;\n    \n  case 'maintenance':\n    operationResults = {\n      ...operationResults,\n      maintenance_results: {\n        maintenance_window_start: new Date().toISOString(),\n        maintenance_window_duration: 120, // minutes\n        tasks_completed: 8,\n        tasks_failed: 0,\n        services_affected: 12,\n        downtime_minutes: 0\n      }\n    };\n    break;\n    \n  case 'compliance_check':\n    operationResults = {\n      ...operationResults,\n      compliance_results: {\n        policies_checked: 25,\n        compliant: 23,\n        non_compliant: 2,\n        compliance_percentage: 92,\n        violations: [\n          { policy: 'password_complexity', devices: 1 },\n          { policy: 'snmp_v3_only', devices: 1 }\n        ]\n      }\n    };\n    break;\n    \n  default:\n    operationResults.status = 'unknown_operation';\n}\n\nreturn {\n  ...opsVars,\n  operation_results: operationResults\n};"
+      },
+      "name": "Perform Other Operations",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1480, 360],
+      "id": "perform-other-operations"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "workflow_status",
+              "name": "workflow_status",
+              "type": "string",
+              "value": "completed"
+            },
+            {
+              "id": "message",
+              "name": "message",
+              "type": "string",
+              "value": "Network operations workflow completed successfully"
+            },
+            {
+              "id": "operation_type",
+              "name": "operation_type",
+              "type": "string",
+              "value": "={{ $('Initialize Operations Variables').item(0).json.operation_type }}"
+            },
+            {
+              "id": "operation_scope",
+              "name": "operation_scope",
+              "type": "string",
+              "value": "={{ $('Initialize Operations Variables').item(0).json.operation_scope }}"
+            },
+            {
+              "id": "overall_status",
+              "name": "overall_status",
+              "type": "string",
+              "value": "={{ $input.first().json.health_check_results?.overall_status || $input.first().json.operation_results?.status || 'completed' }}"
+            },
+            {
+              "id": "issues_found",
+              "name": "issues_found",
+              "type": "number",
+              "value": "={{ $input.first().json.health_check_results?.issues_found || 0 }}"
+            },
+            {
+              "id": "execution_time",
+              "name": "execution_time",
+              "type": "string",
+              "value": "={{ new Date().toISOString() }}"
+            }
+          ]
+        }
+      },
+      "name": "Set Operations Complete",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3,
+      "position": [1700, 300],
+      "id": "operations-complete"
+    }
+  ],
+  "connections": {
+    "When clicking \"Execute Workflow\"": {
+      "main": [
+        [
+          {
+            "node": "Initialize Operations Variables",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Initialize Operations Variables": {
+      "main": [
+        [
+          {
+            "node": "Is Health Check Operation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Health Check Operation": {
+      "main": [
+        [
+          {
+            "node": "Perform Health Check",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Perform Other Operations",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Perform Health Check": {
+      "main": [
+        [
+          {
+            "node": "Set Operations Complete",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Perform Other Operations": {
+      "main": [
+        [
+          {
+            "node": "Set Operations Complete",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": ["operations", "monitoring", "maintenance", "health-check", "netbox", "orchestrator"],
+  "triggerCount": 0,
+  "updatedAt": "2024-12-19T16:15:00.000Z",
+  "versionId": "1.0.0"
+}

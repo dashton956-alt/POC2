@@ -1,0 +1,594 @@
+{
+  "name": "Syslog MCP Analysis & Recommendations",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "b8c4f7d1-3a2e-4f5b-9c8d-1e2f3a4b5c6d",
+      "name": "Start",
+      "type": "n8n-nodes-base.start",
+      "typeVersion": 1,
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "mode": "webhook",
+        "webhookId": "syslog-webhook",
+        "httpMethod": "POST",
+        "path": "syslog",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-syslog",
+      "name": "Syslog Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [460, 300],
+      "webhookId": "syslog-webhook"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Parse incoming syslog message\nconst syslogData = $input.first().json;\n\n// Extract syslog components\nconst parseRFC3164 = (message) => {\n  const rfc3164Regex = /^<(\\d+)>(\\w{3}\\s+\\d{1,2}\\s+\\d{2}:\\d{2}:\\d{2})\\s+(\\S+)\\s+(\\S+):\\s*(.*)$/;\n  const match = message.match(rfc3164Regex);\n  \n  if (match) {\n    const priority = parseInt(match[1]);\n    const facility = Math.floor(priority / 8);\n    const severity = priority % 8;\n    \n    return {\n      priority,\n      facility,\n      severity,\n      timestamp: match[2],\n      hostname: match[3],\n      tag: match[4],\n      message: match[5],\n      raw_message: message,\n      severity_name: getSeverityName(severity),\n      facility_name: getFacilityName(facility)\n    };\n  }\n  \n  return {\n    raw_message: message,\n    parsed: false,\n    timestamp: new Date().toISOString()\n  };\n};\n\nconst getSeverityName = (severity) => {\n  const severities = {\n    0: 'Emergency',\n    1: 'Alert', \n    2: 'Critical',\n    3: 'Error',\n    4: 'Warning',\n    5: 'Notice',\n    6: 'Informational',\n    7: 'Debug'\n  };\n  return severities[severity] || 'Unknown';\n};\n\nconst getFacilityName = (facility) => {\n  const facilities = {\n    0: 'kernel',\n    1: 'user',\n    2: 'mail',\n    3: 'daemon',\n    4: 'security',\n    5: 'syslogd',\n    6: 'line printer',\n    16: 'local use 0',\n    17: 'local use 1',\n    18: 'local use 2',\n    19: 'local use 3',\n    20: 'local use 4',\n    21: 'local use 5',\n    22: 'local use 6',\n    23: 'local use 7'\n  };\n  return facilities[facility] || 'Unknown';\n};\n\n// Parse the syslog message\nlet parsedLog;\nif (syslogData.message) {\n  parsedLog = parseRFC3164(syslogData.message);\n} else if (syslogData.raw_log) {\n  parsedLog = parseRFC3164(syslogData.raw_log);\n} else {\n  parsedLog = {\n    raw_message: JSON.stringify(syslogData),\n    parsed: false,\n    timestamp: new Date().toISOString()\n  };\n}\n\n// Add metadata\nparsedLog.received_at = new Date().toISOString();\nparsedLog.source_ip = syslogData.source_ip || 'unknown';\nparsedLog.id = `syslog_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;\n\n// Classify severity level for analysis\nif (parsedLog.severity !== undefined) {\n  if (parsedLog.severity <= 2) {\n    parsedLog.alert_level = 'CRITICAL';\n  } else if (parsedLog.severity <= 4) {\n    parsedLog.alert_level = 'WARNING';\n  } else {\n    parsedLog.alert_level = 'INFO';\n  }\n}\n\nreturn [parsedLog];"
+      },
+      "id": "parse-syslog",
+      "name": "Parse Syslog Message",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [680, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.alert_level }}",
+              "rightValue": "CRITICAL",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            },
+            {
+              "leftValue": "={{ $json.severity }}",
+              "rightValue": 3,
+              "operator": {
+                "type": "number",
+                "operation": "lte"
+              }
+            }
+          ],
+          "combinator": "or"
+        },
+        "options": {}
+      },
+      "id": "severity-filter",
+      "name": "High Severity Filter",
+      "type": "n8n-nodes-base.filter",
+      "typeVersion": 2,
+      "position": [900, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "{{ $('Environment Variables').first().json.MCP_SERVER_URL }}/analyze",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Authorization",
+              "value": "Bearer {{ $('Environment Variables').first().json.MCP_API_TOKEN }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": []
+        },
+        "jsonBody": "{\n  \"type\": \"syslog_analysis\",\n  \"data\": {\n    \"message\": \"{{ $json.raw_message }}\",\n    \"parsed_data\": {\n      \"severity\": {{ $json.severity }},\n      \"facility\": {{ $json.facility }},\n      \"hostname\": \"{{ $json.hostname }}\",\n      \"tag\": \"{{ $json.tag }}\",\n      \"timestamp\": \"{{ $json.timestamp }}\",\n      \"severity_name\": \"{{ $json.severity_name }}\",\n      \"facility_name\": \"{{ $json.facility_name }}\"\n    },\n    \"metadata\": {\n      \"source_ip\": \"{{ $json.source_ip }}\",\n      \"received_at\": \"{{ $json.received_at }}\",\n      \"alert_level\": \"{{ $json.alert_level }}\"\n    }\n  },\n  \"analysis_request\": {\n    \"include_recommendations\": true,\n    \"include_severity_assessment\": true,\n    \"include_root_cause_analysis\": true,\n    \"include_remediation_steps\": true,\n    \"context_awareness\": true\n  }\n}",
+        "options": {
+          "timeout": 30000,
+          "retry": {
+            "enabled": true,
+            "maxTries": 3
+          }
+        }
+      },
+      "id": "mcp-analysis",
+      "name": "MCP Server Analysis",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1120, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Process MCP server response and format recommendations\nconst mcpResponse = $input.first().json;\nconst originalSyslog = $('Parse Syslog Message').first().json;\n\n// Extract analysis results\nconst analysis = mcpResponse.analysis || {};\nconst recommendations = mcpResponse.recommendations || [];\nconst severity_assessment = mcpResponse.severity_assessment || {};\nconst root_cause = mcpResponse.root_cause_analysis || {};\nconst remediation = mcpResponse.remediation_steps || [];\n\n// Create structured output\nconst result = {\n  // Original syslog data\n  syslog: {\n    id: originalSyslog.id,\n    raw_message: originalSyslog.raw_message,\n    parsed: {\n      severity: originalSyslog.severity,\n      severity_name: originalSyslog.severity_name,\n      facility: originalSyslog.facility,\n      facility_name: originalSyslog.facility_name,\n      hostname: originalSyslog.hostname,\n      tag: originalSyslog.tag,\n      timestamp: originalSyslog.timestamp,\n      message: originalSyslog.message\n    },\n    metadata: {\n      source_ip: originalSyslog.source_ip,\n      received_at: originalSyslog.received_at,\n      alert_level: originalSyslog.alert_level\n    }\n  },\n  \n  // MCP Analysis Results\n  mcp_analysis: {\n    analysis_timestamp: new Date().toISOString(),\n    confidence_score: analysis.confidence_score || 0.8,\n    category: analysis.category || 'Unknown',\n    sub_category: analysis.sub_category || 'Unknown',\n    description: analysis.description || 'No analysis description provided',\n    \n    // Severity Assessment\n    severity_assessment: {\n      mcp_severity_level: severity_assessment.level || originalSyslog.alert_level,\n      risk_score: severity_assessment.risk_score || 5,\n      impact_assessment: severity_assessment.impact || 'Medium',\n      urgency: severity_assessment.urgency || 'Medium',\n      business_impact: severity_assessment.business_impact || 'Unknown'\n    },\n    \n    // Root Cause Analysis\n    root_cause_analysis: {\n      probable_cause: root_cause.probable_cause || 'Analysis pending',\n      contributing_factors: root_cause.contributing_factors || [],\n      affected_systems: root_cause.affected_systems || [originalSyslog.hostname],\n      error_patterns: root_cause.error_patterns || []\n    },\n    \n    // Recommendations\n    recommendations: recommendations.map((rec, index) => ({\n      id: `rec_${index + 1}`,\n      priority: rec.priority || 'Medium',\n      category: rec.category || 'General',\n      title: rec.title || 'Recommendation',\n      description: rec.description || 'No description provided',\n      estimated_effort: rec.estimated_effort || 'Unknown',\n      automation_possible: rec.automation_possible || false,\n      immediate_action: rec.immediate_action || false\n    })),\n    \n    // Remediation Steps\n    remediation_steps: remediation.map((step, index) => ({\n      step_number: index + 1,\n      action: step.action || 'No action specified',\n      command: step.command || null,\n      expected_outcome: step.expected_outcome || 'Resolution',\n      validation: step.validation || 'Manual verification required',\n      rollback_plan: step.rollback_plan || 'No rollback plan specified'\n    })),\n    \n    // Additional Context\n    context: {\n      similar_incidents: analysis.similar_incidents || 0,\n      trend_analysis: analysis.trend_analysis || 'No trend data',\n      escalation_required: severity_assessment.risk_score > 7,\n      auto_remediation_eligible: recommendations.some(r => r.automation_possible)\n    }\n  },\n  \n  // Action Items\n  action_items: {\n    immediate_actions: recommendations.filter(r => r.immediate_action).length,\n    total_recommendations: recommendations.length,\n    high_priority_items: recommendations.filter(r => r.priority === 'High').length,\n    automation_opportunities: recommendations.filter(r => r.automation_possible).length\n  }\n};\n\nreturn [result];"
+      },
+      "id": "process-recommendations",
+      "name": "Process MCP Recommendations",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1340, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.mcp_analysis.severity_assessment.risk_score }}",
+              "rightValue": 7,
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            },
+            {
+              "leftValue": "={{ $json.mcp_analysis.context.escalation_required }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equal"
+              }
+            }
+          ],
+          "combinator": "or"
+        },
+        "options": {}
+      },
+      "id": "escalation-filter",
+      "name": "Escalation Required?",
+      "type": "n8n-nodes-base.filter",
+      "typeVersion": 2,
+      "position": [1560, 200]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "{{ $('Environment Variables').first().json.SLACK_WEBHOOK_URL }}",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": []
+        },
+        "jsonBody": "{\n  \"channel\": \"#ops-alerts\",\n  \"username\": \"Syslog MCP Analyzer\",\n  \"icon_emoji\": \":warning:\",\n  \"attachments\": [\n    {\n      \"color\": \"{{ $json.mcp_analysis.severity_assessment.risk_score > 8 ? 'danger' : 'warning' }}\",\n      \"title\": \"Critical Syslog Alert - {{ $json.syslog.parsed.hostname }}\",\n      \"fields\": [\n        {\n          \"title\": \"Severity\",\n          \"value\": \"{{ $json.syslog.parsed.severity_name }} ({{ $json.syslog.parsed.severity }})\",\n          \"short\": true\n        },\n        {\n          \"title\": \"Risk Score\",\n          \"value\": \"{{ $json.mcp_analysis.severity_assessment.risk_score }}/10\",\n          \"short\": true\n        },\n        {\n          \"title\": \"Category\",\n          \"value\": \"{{ $json.mcp_analysis.category }}\",\n          \"short\": true\n        },\n        {\n          \"title\": \"Affected System\",\n          \"value\": \"{{ $json.syslog.parsed.hostname }}\",\n          \"short\": true\n        },\n        {\n          \"title\": \"Root Cause\",\n          \"value\": \"{{ $json.mcp_analysis.root_cause_analysis.probable_cause }}\",\n          \"short\": false\n        },\n        {\n          \"title\": \"Immediate Actions Required\",\n          \"value\": \"{{ $json.action_items.immediate_actions }} actions needed\",\n          \"short\": true\n        },\n        {\n          \"title\": \"Auto-Remediation Available\",\n          \"value\": \"{{ $json.mcp_analysis.context.auto_remediation_eligible ? 'Yes' : 'No' }}\",\n          \"short\": true\n        }\n      ],\n      \"footer\": \"MCP Syslog Analyzer\",\n      \"ts\": {{ Math.floor(Date.now() / 1000) }}\n    }\n  ]\n}",
+        "options": {}
+      },
+      "id": "slack-alert",
+      "name": "Send Slack Alert",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1780, 200]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.mcp_analysis.context.auto_remediation_eligible }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equal"
+              }
+            },
+            {
+              "leftValue": "={{ $json.action_items.automation_opportunities }}",
+              "rightValue": 0,
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "auto-remediation-filter",
+      "name": "Auto-Remediation Available?",
+      "type": "n8n-nodes-base.filter",
+      "typeVersion": 2,
+      "position": [1560, 400]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Execute automated remediation steps\nconst analysisData = $input.first().json;\nconst remediationSteps = analysisData.mcp_analysis.remediation_steps;\nconst automationEligible = analysisData.mcp_analysis.recommendations.filter(r => r.automation_possible);\n\n// Prepare remediation commands\nconst commands = [];\nconst results = [];\n\n// Process each remediation step\nfor (const step of remediationSteps) {\n  if (step.command && step.command !== null) {\n    commands.push({\n      step_number: step.step_number,\n      command: step.command,\n      expected_outcome: step.expected_outcome,\n      validation: step.validation,\n      rollback_plan: step.rollback_plan,\n      execution_timestamp: new Date().toISOString(),\n      status: 'pending'\n    });\n  }\n}\n\n// Create execution plan\nconst executionPlan = {\n  syslog_id: analysisData.syslog.id,\n  hostname: analysisData.syslog.parsed.hostname,\n  remediation_plan: {\n    total_steps: commands.length,\n    automated_steps: commands.length,\n    execution_mode: 'automated',\n    created_at: new Date().toISOString(),\n    estimated_duration: commands.length * 30 + ' seconds'\n  },\n  commands: commands,\n  safety_checks: {\n    backup_required: true,\n    rollback_plan_available: commands.every(c => c.rollback_plan !== 'No rollback plan specified'),\n    approval_required: analysisData.mcp_analysis.severity_assessment.risk_score > 8\n  },\n  monitoring: {\n    pre_execution_snapshot: true,\n    post_execution_validation: true,\n    continuous_monitoring: 300 // 5 minutes\n  }\n};\n\nreturn [executionPlan];"
+      },
+      "id": "prepare-auto-remediation",
+      "name": "Prepare Auto-Remediation",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1780, 400]
+    },
+    {
+      "parameters": {
+        "resource": "database",
+        "operation": "insert",
+        "schema": {
+          "value": "public"
+        },
+        "table": {
+          "value": "syslog_analysis"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "syslog_id": "={{ $json.syslog.id }}",
+            "hostname": "={{ $json.syslog.parsed.hostname }}",
+            "severity": "={{ $json.syslog.parsed.severity }}",
+            "facility": "={{ $json.syslog.parsed.facility }}",
+            "raw_message": "={{ $json.syslog.raw_message }}",
+            "mcp_analysis": "={{ JSON.stringify($json.mcp_analysis) }}",
+            "recommendations_count": "={{ $json.action_items.total_recommendations }}",
+            "risk_score": "={{ $json.mcp_analysis.severity_assessment.risk_score }}",
+            "escalation_required": "={{ $json.mcp_analysis.context.escalation_required }}",
+            "auto_remediation_available": "={{ $json.mcp_analysis.context.auto_remediation_eligible }}",
+            "created_at": "={{ $json.syslog.metadata.received_at }}",
+            "analysis_timestamp": "={{ $json.mcp_analysis.analysis_timestamp }}"
+          },
+          "matchingColumns": [
+            "syslog_id",
+            "hostname",
+            "severity",
+            "facility",
+            "raw_message",
+            "mcp_analysis",
+            "recommendations_count",
+            "risk_score",
+            "escalation_required",
+            "auto_remediation_available",
+            "created_at",
+            "analysis_timestamp"
+          ],
+          "schema": [
+            {
+              "id": "syslog_id",
+              "displayName": "syslog_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "hostname",
+              "displayName": "hostname",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "severity",
+              "displayName": "severity",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "facility",
+              "displayName": "facility",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "raw_message",
+              "displayName": "raw_message",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "mcp_analysis",
+              "displayName": "mcp_analysis",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "json",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "recommendations_count",
+              "displayName": "recommendations_count",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "risk_score",
+              "displayName": "risk_score",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "escalation_required",
+              "displayName": "escalation_required",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "boolean",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "auto_remediation_available",
+              "displayName": "auto_remediation_available",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "boolean",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "created_at",
+              "displayName": "created_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "dateTime",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "analysis_timestamp",
+              "displayName": "analysis_timestamp",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "dateTime",
+              "canBeUsedToMatch": true
+            }
+          ]
+        }
+      },
+      "id": "store-analysis",
+      "name": "Store Analysis Results",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [1560, 600],
+      "credentials": {
+        "postgres": {
+          "id": "postgres-main",
+          "name": "PostgreSQL Main Database"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "env-mcp-server-url",
+              "name": "MCP_SERVER_URL",
+              "value": "={{ $vars.MCP_SERVER_URL || 'http://localhost:3001' }}",
+              "type": "string"
+            },
+            {
+              "id": "env-mcp-api-token",
+              "name": "MCP_API_TOKEN",
+              "value": "={{ $vars.MCP_API_TOKEN || '' }}",
+              "type": "string"
+            },
+            {
+              "id": "env-slack-webhook",
+              "name": "SLACK_WEBHOOK_URL",
+              "value": "={{ $vars.SLACK_WEBHOOK_URL || '' }}",
+              "type": "string"
+            },
+            {
+              "id": "env-netbox-url",
+              "name": "NETBOX_URL",
+              "value": "={{ $vars.NETBOX_URL || 'http://localhost:8000' }}",
+              "type": "string"
+            },
+            {
+              "id": "env-netbox-token",
+              "name": "NETBOX_TOKEN",
+              "value": "={{ $vars.NETBOX_TOKEN || '' }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "environment-variables",
+      "name": "Environment Variables",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.3,
+      "position": [240, 500]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "{\n  \"status\": \"success\",\n  \"message\": \"Syslog message processed and analyzed\",\n  \"data\": {\n    \"syslog_id\": \"{{ $('Process MCP Recommendations').first().json.syslog.id }}\",\n    \"analysis_completed\": true,\n    \"recommendations_count\": {{ $('Process MCP Recommendations').first().json.action_items.total_recommendations }},\n    \"risk_score\": {{ $('Process MCP Recommendations').first().json.mcp_analysis.severity_assessment.risk_score }},\n    \"escalation_required\": {{ $('Process MCP Recommendations').first().json.mcp_analysis.context.escalation_required }},\n    \"auto_remediation_available\": {{ $('Process MCP Recommendations').first().json.mcp_analysis.context.auto_remediation_eligible }},\n    \"processed_at\": \"{{ new Date().toISOString() }}\"\n  }\n}",
+        "options": {}
+      },
+      "id": "webhook-response",
+      "name": "Webhook Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [1780, 600]
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Start": {
+      "main": [
+        [
+          {
+            "node": "Environment Variables",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Syslog Webhook": {
+      "main": [
+        [
+          {
+            "node": "Parse Syslog Message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Syslog Message": {
+      "main": [
+        [
+          {
+            "node": "High Severity Filter",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "High Severity Filter": {
+      "main": [
+        [
+          {
+            "node": "MCP Server Analysis",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "MCP Server Analysis": {
+      "main": [
+        [
+          {
+            "node": "Process MCP Recommendations",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Process MCP Recommendations": {
+      "main": [
+        [
+          {
+            "node": "Escalation Required?",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Auto-Remediation Available?",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Store Analysis Results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Escalation Required?": {
+      "main": [
+        [
+          {
+            "node": "Send Slack Alert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Auto-Remediation Available?": {
+      "main": [
+        [
+          {
+            "node": "Prepare Auto-Remediation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Store Analysis Results": {
+      "main": [
+        [
+          {
+            "node": "Webhook Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Environment Variables": {
+      "main": [
+        [
+          {
+            "node": "Syslog Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner",
+    "errorWorkflow": {
+      "value": ""
+    }
+  },
+  "versionId": "1",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "syslog-mcp-analysis-workflow"
+  },
+  "id": "syslog-mcp-analysis",
+  "tags": [
+    {
+      "createdAt": "2025-08-11T12:00:00.000Z",
+      "updatedAt": "2025-08-11T12:00:00.000Z",
+      "id": "syslog-analysis",
+      "name": "Syslog Analysis"
+    },
+    {
+      "createdAt": "2025-08-11T12:00:00.000Z", 
+      "updatedAt": "2025-08-11T12:00:00.000Z",
+      "id": "mcp-integration",
+      "name": "MCP Integration"
+    }
+  ]
+}

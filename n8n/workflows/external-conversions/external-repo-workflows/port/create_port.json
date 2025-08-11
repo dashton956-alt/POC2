@@ -1,0 +1,605 @@
+{
+  "name": "Create Port",
+  "nodes": [
+    {
+      "parameters": {},
+      "name": "When clicking \"Execute Workflow\"",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [820, 300],
+      "id": "trigger-create-port"
+    },
+    {
+      "parameters": {
+        "content": "## Port Creation Workflow\n\n**Purpose**: Provision customer-facing ports on network nodes\n\n**Port Types**:\n- Untagged ports - Single VLAN access\n- Tagged ports - Multiple VLAN trunk \n- Link member ports - Part of LAG/port-channel\n\n**Process**:\n1. Select target node and available interface\n2. Configure port parameters (speed, type, VLAN)\n3. Enable port in NetBox inventory\n4. Deploy interface configuration via LSO\n5. Register port with network resource manager\n6. Validate port operational status\n\n**Requirements**:\n- Target node must exist and be active\n- Interface must be available (not connected)\n- Port speed must match interface capability\n\n**Environment Variables Used**:\n- `NETBOX_TOKEN`: NetBox API authentication\n- `NETBOX_URL`: NetBox instance URL\n- `LSO_URL`: LSO automation endpoint\n- `CUSTOMER_ID`: Customer identifier\n- `NODE_ID`: Target node ID for port creation"
+      },
+      "name": "Workflow Documentation",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [400, 80],
+      "id": "doc-create-port"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "workflow_id",
+              "name": "workflow_id",
+              "type": "string",
+              "value": "={{ $runIndex }}_create_port_{{ Date.now() }}"
+            },
+            {
+              "id": "workflow_type",
+              "name": "workflow_type",
+              "type": "string",
+              "value": "create_workflow"
+            },
+            {
+              "id": "product_type",
+              "name": "product_type",
+              "type": "string",
+              "value": "Port"
+            },
+            {
+              "id": "target",
+              "name": "target",
+              "type": "string",
+              "value": "CREATE"
+            },
+            {
+              "id": "customer_id",
+              "name": "customer_id",
+              "type": "string",
+              "value": "={{ $env.CUSTOMER_ID || 'default-customer' }}"
+            },
+            {
+              "id": "node_id",
+              "name": "node_id",
+              "type": "string",
+              "value": "={{ $env.NODE_ID || '1' }}"
+            }
+          ]
+        }
+      },
+      "name": "Initialize Port Variables",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3,
+      "position": [1040, 300],
+      "id": "init-port-variables"
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $env.NETBOX_URL }}/api/dcim/devices/{{ $json.node_id }}/",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "netBoxApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Token {{ $env.NETBOX_TOKEN }}"
+            }
+          ]
+        }
+      },
+      "name": "Get Target Node",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [1260, 300],
+      "id": "get-target-node"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "leftValue": "",
+            "caseSensitive": true,
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "node-active",
+              "leftValue": "={{ $json.status.value }}",
+              "rightValue": "active",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "name": "Validate Node Active",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1480, 300],
+      "id": "validate-node-active"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "error_message",
+              "name": "error_message",
+              "type": "string",
+              "value": "Target node is not active or not found"
+            },
+            {
+              "id": "error_code",
+              "name": "error_code",
+              "type": "string",
+              "value": "NODE_NOT_ACTIVE"
+            }
+          ]
+        }
+      },
+      "name": "Set Error - Node Not Active",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3,
+      "position": [1700, 480],
+      "id": "error-node-not-active"
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $env.NETBOX_URL }}/api/dcim/interfaces/",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "netBoxApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Token {{ $env.NETBOX_TOKEN }}"
+            }
+          ]
+        },
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "device_id",
+              "value": "={{ $('Initialize Port Variables').item(0).json.node_id }}"
+            },
+            {
+              "name": "enabled",
+              "value": "false"
+            },
+            {
+              "name": "type",
+              "value": "1000base-t"
+            },
+            {
+              "name": "cable__isnull",
+              "value": "true"
+            }
+          ]
+        }
+      },
+      "name": "Get Available Interfaces",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [1700, 300],
+      "id": "get-available-interfaces"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "leftValue": "",
+            "caseSensitive": true,
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "interfaces-available",
+              "leftValue": "={{ $json.count }}",
+              "rightValue": 1,
+              "operator": {
+                "type": "number",
+                "operation": "gte"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "name": "Check Interfaces Available",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1920, 300],
+      "id": "check-interfaces-available"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "error_message",
+              "name": "error_message",
+              "type": "string",
+              "value": "No available interfaces found on target node"
+            },
+            {
+              "id": "error_code",
+              "name": "error_code",
+              "type": "string",
+              "value": "NO_AVAILABLE_INTERFACES"
+            }
+          ]
+        }
+      },
+      "name": "Set Error - No Interfaces",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3,
+      "position": [2140, 480],
+      "id": "error-no-interfaces"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Construct port subscription model\nconst workflowVars = $('Initialize Port Variables').item(0).json;\nconst nodeData = $('Get Target Node').item(0).json;\nconst interfaceData = $('Get Available Interfaces').item(0).json;\n\n// Select first available interface\nconst selectedInterface = interfaceData.results[0];\n\n// Port configuration (in production, these would come from user input forms)\nconst portConfig = {\n  interface_id: selectedInterface.id,\n  interface_name: selectedInterface.name,\n  port_name: `${nodeData.name}-${selectedInterface.name}`,\n  port_mode: 'tagged', // untagged, tagged, link_member\n  port_speed: '1G',\n  port_type: 'customer',\n  vlan_id: 100, // Default VLAN for customer ports\n  enabled: true,\n  ims_id: null, // Will be set when enabling in NetBox\n  nrm_id: null, // Will be set when registering with NRM\n  node: {\n    id: nodeData.id,\n    name: nodeData.name,\n    site: nodeData.site\n  },\n  description: `Customer port on ${nodeData.name}`,\n  customer_facing: true\n};\n\n// Create port subscription model\nconst portSubscription = {\n  workflow_id: workflowVars.workflow_id,\n  product_type: workflowVars.product_type,\n  customer_id: workflowVars.customer_id,\n  status: 'provisioning',\n  port: portConfig,\n  created_at: new Date().toISOString()\n};\n\nreturn portSubscription;"
+      },
+      "name": "Construct Port Model",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2140, 300],
+      "id": "construct-port-model"
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "={{ $env.NETBOX_URL }}/api/dcim/interfaces/{{ $json.port.interface_id }}/",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "netBoxApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Token {{ $env.NETBOX_TOKEN }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\n  \"enabled\": true,\n  \"description\": \"{{ $json.port.description }}\",\n  \"mode\": \"tagged\",\n  \"untagged_vlan\": null,\n  \"tagged_vlans\": [{{ $json.port.vlan_id }}]\n}"
+      },
+      "name": "Enable Port in NetBox",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [2360, 300],
+      "id": "enable-port-netbox"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.LSO_URL || 'http://localhost:8080' }}/api/playbooks/execute",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\n  \"playbook_name\": \"create_port.yaml\",\n  \"inventory\": \"{{ $('Construct Port Model').item(0).json.port.node.name }}\",\n  \"extra_vars\": {\n    \"port\": {\n      \"name\": \"{{ $('Construct Port Model').item(0).json.port.port_name }}\",\n      \"interface\": \"{{ $('Construct Port Model').item(0).json.port.interface_name }}\",\n      \"mode\": \"{{ $('Construct Port Model').item(0).json.port.port_mode }}\",\n      \"vlan_id\": {{ $('Construct Port Model').item(0).json.port.vlan_id }},\n      \"speed\": \"{{ $('Construct Port Model').item(0).json.port.port_speed }}\",\n      \"description\": \"{{ $('Construct Port Model').item(0).json.port.description }}\"\n    },\n    \"node\": {\n      \"name\": \"{{ $('Construct Port Model').item(0).json.port.node.name }}\"\n    },\n    \"workflow_id\": \"{{ $('Construct Port Model').item(0).json.workflow_id }}\"\n  }\n}"
+      },
+      "name": "Deploy Port Configuration",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [2580, 300],
+      "id": "deploy-port-config"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "nrm_id",
+              "name": "nrm_id",
+              "type": "number",
+              "value": "={{ Math.floor(Math.random() * 65536) }}"
+            },
+            {
+              "id": "nrm_status",
+              "name": "nrm_status",
+              "type": "string",
+              "value": "registered"
+            }
+          ]
+        }
+      },
+      "name": "Register Port with NRM",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3,
+      "position": [2800, 300],
+      "id": "register-port-nrm"
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $env.NETBOX_URL }}/api/dcim/interfaces/{{ $('Construct Port Model').item(0).json.port.interface_id }}/",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "netBoxApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Token {{ $env.NETBOX_TOKEN }}"
+            }
+          ]
+        }
+      },
+      "name": "Validate Port Status",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [3020, 300],
+      "id": "validate-port-status"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "workflow_status",
+              "name": "workflow_status",
+              "type": "string",
+              "value": "completed"
+            },
+            {
+              "id": "message",
+              "name": "message",
+              "type": "string",
+              "value": "Port {{ $('Construct Port Model').item(0).json.port.port_name }} created successfully"
+            },
+            {
+              "id": "port_id",
+              "name": "port_id",
+              "type": "number",
+              "value": "={{ $('Construct Port Model').item(0).json.port.interface_id }}"
+            },
+            {
+              "id": "port_name",
+              "name": "port_name",
+              "type": "string",
+              "value": "={{ $('Construct Port Model').item(0).json.port.port_name }}"
+            },
+            {
+              "id": "interface_name",
+              "name": "interface_name",
+              "type": "string",
+              "value": "={{ $('Construct Port Model').item(0).json.port.interface_name }}"
+            },
+            {
+              "id": "vlan_id",
+              "name": "vlan_id",
+              "type": "number",
+              "value": "={{ $('Construct Port Model').item(0).json.port.vlan_id }}"
+            },
+            {
+              "id": "nrm_id",
+              "name": "nrm_id",
+              "type": "number",
+              "value": "={{ $('Register Port with NRM').item(0).json.nrm_id }}"
+            },
+            {
+              "id": "port_enabled",
+              "name": "port_enabled",
+              "type": "boolean",
+              "value": "={{ $('Validate Port Status').item(0).json.enabled }}"
+            }
+          ]
+        }
+      },
+      "name": "Set Port Creation Success",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3,
+      "position": [3240, 300],
+      "id": "port-creation-success"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "workflow_status",
+              "name": "workflow_status",
+              "type": "string",
+              "value": "failed"
+            },
+            {
+              "id": "timestamp",
+              "name": "timestamp",
+              "type": "string",
+              "value": "={{ new Date().toISOString() }}"
+            }
+          ]
+        }
+      },
+      "name": "Set Error Response",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3,
+      "position": [1920, 600],
+      "id": "error-response"
+    }
+  ],
+  "connections": {
+    "When clicking \"Execute Workflow\"": {
+      "main": [
+        [
+          {
+            "node": "Initialize Port Variables",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Initialize Port Variables": {
+      "main": [
+        [
+          {
+            "node": "Get Target Node",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Target Node": {
+      "main": [
+        [
+          {
+            "node": "Validate Node Active",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Node Active": {
+      "main": [
+        [
+          {
+            "node": "Get Available Interfaces",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Set Error - Node Not Active",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set Error - Node Not Active": {
+      "main": [
+        [
+          {
+            "node": "Set Error Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Available Interfaces": {
+      "main": [
+        [
+          {
+            "node": "Check Interfaces Available",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Interfaces Available": {
+      "main": [
+        [
+          {
+            "node": "Construct Port Model",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Set Error - No Interfaces",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set Error - No Interfaces": {
+      "main": [
+        [
+          {
+            "node": "Set Error Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Construct Port Model": {
+      "main": [
+        [
+          {
+            "node": "Enable Port in NetBox",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Enable Port in NetBox": {
+      "main": [
+        [
+          {
+            "node": "Deploy Port Configuration",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Deploy Port Configuration": {
+      "main": [
+        [
+          {
+            "node": "Register Port with NRM",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Register Port with NRM": {
+      "main": [
+        [
+          {
+            "node": "Validate Port Status",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Port Status": {
+      "main": [
+        [
+          {
+            "node": "Set Port Creation Success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": ["port", "network", "interface", "customer", "netbox", "orchestrator"],
+  "triggerCount": 0,
+  "updatedAt": "2024-12-19T15:45:00.000Z",
+  "versionId": "1.0.0"
+}

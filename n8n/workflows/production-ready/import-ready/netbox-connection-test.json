@@ -1,0 +1,191 @@
+{
+  "name": "NetBox Connection Test",
+  "active": false,
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 30
+            }
+          ]
+        }
+      },
+      "id": "schedule-connection-test",
+      "name": "Every 30 Minutes",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.1,
+      "position": [200, 300]
+    },
+    {
+      "parameters": {
+        "url": "={{ $env.NETBOX_URL || 'http://localhost:8000' }}/api/status/",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "httpHeaderAuth": {
+          "name": "Authorization",
+          "value": "Token {{ $env.NETBOX_TOKEN }}"
+        },
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "json"
+            }
+          }
+        }
+      },
+      "id": "test-netbox-status",
+      "name": "Test NetBox Status",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [400, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "status-check",
+              "leftValue": "={{ $json.netbox_version }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "isNotEmpty"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "check-connection",
+      "name": "Check Connection Status",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [600, 300]
+    },
+    {
+      "parameters": {
+        "values": {
+          "string": [
+            {
+              "name": "status",
+              "value": "NetBox Connection Successful ✅"
+            },
+            {
+              "name": "netbox_version",
+              "value": "={{ $json.netbox_version }}"
+            },
+            {
+              "name": "python_version",
+              "value": "={{ $json.python_version }}"
+            },
+            {
+              "name": "plugins_count",
+              "value": "={{ Object.keys($json.plugins || {}).length }}"
+            },
+            {
+              "name": "test_timestamp",
+              "value": "={{ $now }}"
+            }
+          ]
+        }
+      },
+      "id": "connection-success",
+      "name": "Connection Success",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 1,
+      "position": [800, 200]
+    },
+    {
+      "parameters": {
+        "values": {
+          "string": [
+            {
+              "name": "status",
+              "value": "NetBox Connection Failed ❌"
+            },
+            {
+              "name": "error",
+              "value": "Unable to connect to NetBox API"
+            },
+            {
+              "name": "netbox_url",
+              "value": "={{ $env.NETBOX_URL || 'http://localhost:8000' }}"
+            },
+            {
+              "name": "test_timestamp",
+              "value": "={{ $now }}"
+            }
+          ]
+        }
+      },
+      "id": "connection-failed",
+      "name": "Connection Failed",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 1,
+      "position": [800, 400]
+    }
+  ],
+  "connections": {
+    "Every 30 Minutes": {
+      "main": [
+        [
+          {
+            "node": "Test NetBox Status",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Test NetBox Status": {
+      "main": [
+        [
+          {
+            "node": "Check Connection Status",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Connection Status": {
+      "main": [
+        [
+          {
+            "node": "Connection Success",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Connection Failed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {},
+  "staticData": null,
+  "tags": [
+    {
+      "createdAt": "2025-08-11T12:00:00.000Z",
+      "updatedAt": "2025-08-11T12:00:00.000Z",
+      "id": "netbox-test",
+      "name": "testing"
+    }
+  ],
+  "triggerCount": 0,
+  "updatedAt": "2025-08-11T12:00:00.000Z",
+  "versionId": "1"
+}

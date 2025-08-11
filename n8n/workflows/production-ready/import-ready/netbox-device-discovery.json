@@ -1,0 +1,278 @@
+{
+  "name": "NetBox Device Discovery",
+  "active": false,
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 15
+            }
+          ]
+        }
+      },
+      "id": "device-discovery-schedule",
+      "name": "Every 15 Minutes",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.1,
+      "position": [200, 300]
+    },
+    {
+      "parameters": {
+        "url": "={{ $env.NETBOX_URL || 'http://localhost:8000' }}/api/dcim/devices/",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "httpHeaderAuth": {
+          "name": "Authorization",
+          "value": "Token {{ $env.NETBOX_TOKEN }}"
+        },
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "json"
+            }
+          }
+        }
+      },
+      "id": "get-all-devices",
+      "name": "Get All Devices",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [400, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "devices-found",
+              "leftValue": "={{ $json.results.length }}",
+              "rightValue": 0,
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "check-devices-found",
+      "name": "Check if Devices Found",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [600, 300]
+    },
+    {
+      "parameters": {
+        "fieldsToSplitOut": "results",
+        "options": {}
+      },
+      "id": "split-devices",
+      "name": "Split Device List",
+      "type": "n8n-nodes-base.itemLists",
+      "typeVersion": 3,
+      "position": [800, 200]
+    },
+    {
+      "parameters": {
+        "url": "={{ $env.NETBOX_URL || 'http://localhost:8000' }}/api/dcim/interfaces/?device_id={{ $json.id }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "httpHeaderAuth": {
+          "name": "Authorization",
+          "value": "Token {{ $env.NETBOX_TOKEN }}"
+        },
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "json"
+            }
+          }
+        }
+      },
+      "id": "get-device-interfaces",
+      "name": "Get Device Interfaces",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1000, 200]
+    },
+    {
+      "parameters": {
+        "values": {
+          "string": [
+            {
+              "name": "device_id",
+              "value": "={{ $('Split Device List').item.json.id }}"
+            },
+            {
+              "name": "device_name",
+              "value": "={{ $('Split Device List').item.json.name }}"
+            },
+            {
+              "name": "device_status",
+              "value": "={{ $('Split Device List').item.json.status.label }}"
+            },
+            {
+              "name": "device_type",
+              "value": "={{ $('Split Device List').item.json.device_type.display }}"
+            },
+            {
+              "name": "site_name",
+              "value": "={{ $('Split Device List').item.json.site.name }}"
+            },
+            {
+              "name": "primary_ip",
+              "value": "={{ $('Split Device List').item.json.primary_ip4 ? $('Split Device List').item.json.primary_ip4.address : 'No IP' }}"
+            },
+            {
+              "name": "interfaces_count",
+              "value": "={{ $json.count }}"
+            },
+            {
+              "name": "discovered_at",
+              "value": "={{ $now }}"
+            }
+          ]
+        }
+      },
+      "id": "format-device-info",
+      "name": "Format Device Info",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 1,
+      "position": [1200, 200]
+    },
+    {
+      "parameters": {
+        "aggregate": "aggregateAllItemData",
+        "destinationFieldName": "devices",
+        "options": {}
+      },
+      "id": "aggregate-devices",
+      "name": "Aggregate All Devices",
+      "type": "n8n-nodes-base.aggregate",
+      "typeVersion": 1,
+      "position": [1400, 200]
+    },
+    {
+      "parameters": {
+        "values": {
+          "string": [
+            {
+              "name": "status",
+              "value": "No devices found in NetBox"
+            },
+            {
+              "name": "message",
+              "value": "Device discovery completed but no devices were found"
+            },
+            {
+              "name": "timestamp",
+              "value": "={{ $now }}"
+            }
+          ]
+        }
+      },
+      "id": "no-devices-found",
+      "name": "No Devices Found",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 1,
+      "position": [800, 400]
+    }
+  ],
+  "connections": {
+    "Every 15 Minutes": {
+      "main": [
+        [
+          {
+            "node": "Get All Devices",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get All Devices": {
+      "main": [
+        [
+          {
+            "node": "Check if Devices Found",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check if Devices Found": {
+      "main": [
+        [
+          {
+            "node": "Split Device List",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "No Devices Found",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Split Device List": {
+      "main": [
+        [
+          {
+            "node": "Get Device Interfaces",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Device Interfaces": {
+      "main": [
+        [
+          {
+            "node": "Format Device Info",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Device Info": {
+      "main": [
+        [
+          {
+            "node": "Aggregate All Devices",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {},
+  "staticData": null,
+  "tags": [
+    {
+      "createdAt": "2025-08-11T12:00:00.000Z",
+      "updatedAt": "2025-08-11T12:00:00.000Z",
+      "id": "netbox-discovery",
+      "name": "netbox"
+    }
+  ],
+  "triggerCount": 0,
+  "updatedAt": "2025-08-11T12:00:00.000Z",
+  "versionId": "1"
+}

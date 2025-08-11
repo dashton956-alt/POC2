@@ -1,0 +1,364 @@
+{
+  "name": "NetBox IPAM Management",
+  "active": false,
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "netbox-ipam",
+        "options": {}
+      },
+      "id": "ipam-webhook",
+      "name": "IPAM Management Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [200, 300],
+      "webhookId": "netbox-ipam"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "check-action",
+              "leftValue": "={{ $json.body.action }}",
+              "rightValue": "create_ip",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "check-action-type",
+      "name": "Check Action Type",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [400, 300]
+    },
+    {
+      "parameters": {
+        "url": "={{ $env.NETBOX_URL || 'http://localhost:8000' }}/api/ipam/ip-addresses/",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "httpHeaderAuth": {
+          "name": "Authorization",
+          "value": "Token {{ $env.NETBOX_TOKEN }}"
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"address\": \"{{ $json.body.ip_address }}\",\n  \"status\": \"active\",\n  \"description\": \"{{ $json.body.description || 'Created via n8n API' }}\",\n  \"dns_name\": \"{{ $json.body.dns_name || '' }}\"\n}",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "json"
+            }
+          }
+        }
+      },
+      "id": "create-ip-address",
+      "name": "Create IP Address",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [600, 200]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "check-device-name",
+              "leftValue": "={{ $json.body.device_name }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "isNotEmpty"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "check-device-assignment",
+      "name": "Check Device Assignment",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [800, 200]
+    },
+    {
+      "parameters": {
+        "url": "={{ $env.NETBOX_URL || 'http://localhost:8000' }}/api/dcim/devices/?name={{ $json.body.device_name }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "httpHeaderAuth": {
+          "name": "Authorization",
+          "value": "Token {{ $env.NETBOX_TOKEN }}"
+        },
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "json"
+            }
+          }
+        }
+      },
+      "id": "find-device",
+      "name": "Find Device",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1000, 100]
+    },
+    {
+      "parameters": {
+        "url": "={{ $env.NETBOX_URL || 'http://localhost:8000' }}/api/ipam/ip-addresses/{{ $('Create IP Address').item.json.id }}/",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "httpHeaderAuth": {
+          "name": "Authorization",
+          "value": "Token {{ $env.NETBOX_TOKEN }}"
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"assigned_object_type\": \"dcim.device\",\n  \"assigned_object_id\": {{ $json.results[0].id }}\n}",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "json"
+            }
+          },
+          "bodyContentType": "application/json"
+        }
+      },
+      "id": "assign-to-device",
+      "name": "Assign to Device",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1200, 100]
+    },
+    {
+      "parameters": {
+        "values": {
+          "string": [
+            {
+              "name": "success",
+              "value": "true"
+            },
+            {
+              "name": "message",
+              "value": "IP address created and assigned successfully"
+            },
+            {
+              "name": "ip_address",
+              "value": "={{ $('Create IP Address').item.json.address }}"
+            },
+            {
+              "name": "id",
+              "value": "={{ $('Create IP Address').item.json.id }}"
+            },
+            {
+              "name": "status",
+              "value": "={{ $('Create IP Address').item.json.status.label }}"
+            },
+            {
+              "name": "assigned_device",
+              "value": "={{ $json.body.device_name }}"
+            },
+            {
+              "name": "created_at",
+              "value": "={{ $now }}"
+            },
+            {
+              "name": "netbox_url",
+              "value": "={{ $env.NETBOX_URL || 'http://localhost:8000' }}/ipam/ip-addresses/{{ $('Create IP Address').item.json.id }}/"
+            }
+          ]
+        }
+      },
+      "id": "success-with-assignment",
+      "name": "Success with Assignment",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 1,
+      "position": [1400, 100]
+    },
+    {
+      "parameters": {
+        "values": {
+          "string": [
+            {
+              "name": "success",
+              "value": "true"
+            },
+            {
+              "name": "message",
+              "value": "IP address created successfully"
+            },
+            {
+              "name": "ip_address",
+              "value": "={{ $('Create IP Address').item.json.address }}"
+            },
+            {
+              "name": "id",
+              "value": "={{ $('Create IP Address').item.json.id }}"
+            },
+            {
+              "name": "status",
+              "value": "={{ $('Create IP Address').item.json.status.label }}"
+            },
+            {
+              "name": "created_at",
+              "value": "={{ $now }}"
+            },
+            {
+              "name": "netbox_url",
+              "value": "={{ $env.NETBOX_URL || 'http://localhost:8000' }}/ipam/ip-addresses/{{ $('Create IP Address').item.json.id }}/"
+            }
+          ]
+        }
+      },
+      "id": "success-no-assignment",
+      "name": "Success without Assignment",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 1,
+      "position": [1000, 300]
+    },
+    {
+      "parameters": {
+        "values": {
+          "string": [
+            {
+              "name": "success",
+              "value": "false"
+            },
+            {
+              "name": "error",
+              "value": "Unsupported action. Use 'create_ip' for IP creation."
+            },
+            {
+              "name": "supported_actions",
+              "value": "create_ip, update_ip, delete_ip"
+            },
+            {
+              "name": "timestamp",
+              "value": "={{ $now }}"
+            }
+          ]
+        }
+      },
+      "id": "unsupported-action",
+      "name": "Unsupported Action",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 1,
+      "position": [600, 400]
+    }
+  ],
+  "connections": {
+    "IPAM Management Webhook": {
+      "main": [
+        [
+          {
+            "node": "Check Action Type",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Action Type": {
+      "main": [
+        [
+          {
+            "node": "Create IP Address",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Unsupported Action",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create IP Address": {
+      "main": [
+        [
+          {
+            "node": "Check Device Assignment",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Device Assignment": {
+      "main": [
+        [
+          {
+            "node": "Find Device",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Success without Assignment",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Find Device": {
+      "main": [
+        [
+          {
+            "node": "Assign to Device",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Assign to Device": {
+      "main": [
+        [
+          {
+            "node": "Success with Assignment",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "responseMode": "responseNode",
+    "responseNode": "Success with Assignment"
+  },
+  "staticData": null,
+  "tags": [
+    {
+      "createdAt": "2025-08-11T12:00:00.000Z",
+      "updatedAt": "2025-08-11T12:00:00.000Z",
+      "id": "ipam-management",
+      "name": "netbox"
+    }
+  ],
+  "triggerCount": 0,
+  "updatedAt": "2025-08-11T12:00:00.000Z",
+  "versionId": "1"
+}

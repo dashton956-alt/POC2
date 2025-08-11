@@ -1,0 +1,775 @@
+{
+  "name": "AI GitOps Network Automation Pipeline",
+  "active": false,
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "ai-gitops-automation",
+        "options": {}
+      },
+      "id": "2a3b4c5d-6e7f-8901-2345-678901234567",
+      "name": "Webhook - AI Network Request",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [200, 300],
+      "webhookId": "{{ $env.CUSTOMER_ID }}-ai-gitops"
+    },
+    {
+      "parameters": {
+        "values": {
+          "string": [
+            {
+              "name": "customer_id",
+              "value": "={{ $env.CUSTOMER_ID || 'default' }}"
+            },
+            {
+              "name": "netbox_url",
+              "value": "={{ $env.NETBOX_URL || 'http://localhost:8000' }}"
+            },
+            {
+              "name": "gitlab_url",
+              "value": "={{ $env.GITLAB_URL || 'https://gitlab.com' }}"
+            },
+            {
+              "name": "openai_model",
+              "value": "={{ $env.OPENAI_MODEL || 'gpt-4' }}"
+            }
+          ]
+        }
+      },
+      "id": "3b4c5d6e-7f89-0123-4567-890123456789",
+      "name": "Set Customer Environment",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 1,
+      "position": [400, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{ $json.intent_type }}",
+              "operation": "exists"
+            }
+          ]
+        }
+      },
+      "id": "4c5d6e7f-8901-2345-6789-012345678901",
+      "name": "Check Request Type",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [600, 300]
+    },
+    {
+      "parameters": {
+        "resource": "completion",
+        "model": "={{ $node['Set Customer Environment'].json.openai_model }}",
+        "prompt": "=You are an expert network automation AI. Parse this network automation request and extract structured data:\n\nRequest: {{ $json.user_request || $json.natural_language_input }}\n\nReturn a JSON object with:\n{\n  \"action_type\": \"create|modify|delete|backup|validate\",\n  \"resource_type\": \"vlan|route|acl|interface|device\",\n  \"parameters\": {\n    \"vlan_id\": \"number\",\n    \"vlan_name\": \"string\",\n    \"location\": \"string\",\n    \"description\": \"string\",\n    \"subnets\": [\"array of IP ranges\"],\n    \"devices\": [\"array of device names/IPs\"]\n  },\n  \"urgency\": \"low|medium|high|emergency\",\n  \"change_window\": \"immediate|scheduled|maintenance\",\n  \"rollback_required\": true/false,\n  \"approval_required\": true/false,\n  \"impact_assessment\": \"description of potential impact\",\n  \"dependencies\": [\"list of dependent systems\"],\n  \"validation_tests\": [\"list of required tests\"]\n}\n\nOnly return valid JSON, no other text.",
+        "temperature": 0.1,
+        "maxTokens": 1000
+      },
+      "id": "5d6e7f89-0123-4567-8901-234567890123",
+      "name": "AI Intent Parser",
+      "type": "n8n-nodes-base.openAi",
+      "typeVersion": 1,
+      "position": [800, 200],
+      "credentials": {
+        "openAiApi": {
+          "id": "{{ $env.OPENAI_CREDENTIAL_ID }}",
+          "name": "OpenAI API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "resource": "form",
+        "operation": "getSubmission",
+        "formId": "network-automation-form",
+        "options": {
+          "dataFormat": "json"
+        }
+      },
+      "id": "6e7f8901-2345-6789-0123-456789012345",
+      "name": "Manual Form Input",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [800, 400]
+    },
+    {
+      "parameters": {
+        "url": "={{ $node['Set Customer Environment'].json.netbox_url }}/api/dcim/sites/",
+        "authentication": "headerAuth",
+        "headerAuth": {
+          "name": "Authorization",
+          "value": "Token {{ $env.NETBOX_TOKEN }}"
+        },
+        "options": {
+          "qs": {
+            "name": "={{ $json.parameters.location }}"
+          }
+        }
+      },
+      "id": "7f890123-4567-8901-2345-678901234567",
+      "name": "Query NetBox - Site Data",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [1000, 300]
+    },
+    {
+      "parameters": {
+        "url": "={{ $node['Set Customer Environment'].json.netbox_url }}/api/dcim/devices/",
+        "authentication": "headerAuth",
+        "headerAuth": {
+          "name": "Authorization",
+          "value": "Token {{ $env.NETBOX_TOKEN }}"
+        },
+        "options": {
+          "qs": {
+            "site": "={{ $json.results[0].id }}",
+            "role": "switch"
+          }
+        }
+      },
+      "id": "89012345-6789-0123-4567-890123456789",
+      "name": "Query NetBox - Devices",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [1200, 300]
+    },
+    {
+      "parameters": {
+        "url": "={{ $node['Set Customer Environment'].json.netbox_url }}/api/ipam/vlans/",
+        "authentication": "headerAuth",
+        "headerAuth": {
+          "name": "Authorization",
+          "value": "Token {{ $env.NETBOX_TOKEN }}"
+        },
+        "options": {
+          "qs": {
+            "site": "={{ $node['Query NetBox - Site Data'].json.results[0].id }}"
+          }
+        }
+      },
+      "id": "90123456-7890-1234-5678-901234567890",
+      "name": "Query NetBox - Existing VLANs",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [1400, 300]
+    },
+    {
+      "parameters": {
+        "resource": "completion",
+        "model": "={{ $node['Set Customer Environment'].json.openai_model }}",
+        "prompt": "=Generate a comprehensive Ansible playbook for this network automation task:\n\nIntent: {{ $node['AI Intent Parser'].json.action_type }} {{ $node['AI Intent Parser'].json.resource_type }}\nParameters: {{ JSON.stringify($node['AI Intent Parser'].json.parameters) }}\n\nNetBox Data:\n- Site: {{ $node['Query NetBox - Site Data'].json.results[0].name }}\n- Devices: {{ $node['Query NetBox - Devices'].json.results.map(d => d.name).join(', ') }}\n- Existing VLANs: {{ $node['Query NetBox - Existing VLANs'].json.results.map(v => v.vid + ':' + v.name).join(', ') }}\n\nGenerate:\n1. **Ansible Playbook YAML** with proper structure:\n   - hosts, vars, tasks, handlers\n   - Network device modules (ios_vlan, nxos_vlan, etc.)\n   - Proper error handling and rollback\n   - Validation tasks and tests\n\n2. **Inventory File** with device groups:\n   - Device IPs and credentials\n   - Group variables\n   - Connection settings\n\n3. **Variables File** with all parameters:\n   - VLAN configurations\n   - Network settings\n   - Customer-specific values\n\n4. **Test Playbook** for validation:\n   - Connectivity tests\n   - Configuration verification\n   - Performance checks\n\n5. **Rollback Playbook** for emergencies:\n   - Configuration restore\n   - Service recovery\n   - Notification tasks\n\nReturn as JSON with keys: playbook_yaml, inventory_yaml, variables_yaml, test_yaml, rollback_yaml",
+        "temperature": 0.2,
+        "maxTokens": 2000
+      },
+      "id": "01234567-8901-2345-6789-012345678901",
+      "name": "AI Playbook Generator",
+      "type": "n8n-nodes-base.openAi",
+      "typeVersion": 1,
+      "position": [1600, 300],
+      "credentials": {
+        "openAiApi": {
+          "id": "{{ $env.OPENAI_CREDENTIAL_ID }}",
+          "name": "OpenAI API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "values": {
+          "string": [
+            {
+              "name": "tfs_number",
+              "value": "=TFS{{ Math.floor(Math.random() * 1000000) }}"
+            },
+            {
+              "name": "branch_name",
+              "value": "=feat/{{ $node['AI Playbook Generator'].json.tfs_number }}-{{ $node['AI Intent Parser'].json.action_type }}-{{ $node['AI Intent Parser'].json.resource_type }}-{{ $node['AI Intent Parser'].json.parameters.vlan_id || 'config' }}"
+            },
+            {
+              "name": "commit_message",
+              "value": "=[{{ $node['AI Playbook Generator'].json.tfs_number }}] {{ $node['AI Intent Parser'].json.action_type }} {{ $node['AI Intent Parser'].json.resource_type }} - {{ $node['AI Intent Parser'].json.parameters.description || 'Network Automation' }}"
+            }
+          ]
+        }
+      },
+      "id": "12345678-9012-3456-7890-123456789012",
+      "name": "Generate Git Metadata",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 1,
+      "position": [1800, 300]
+    },
+    {
+      "parameters": {
+        "url": "={{ $node['Set Customer Environment'].json.gitlab_url }}/api/v4/projects/{{ $env.GITLAB_PROJECT_ID }}/repository/branches",
+        "method": "POST",
+        "authentication": "headerAuth",
+        "headerAuth": {
+          "name": "PRIVATE-TOKEN",
+          "value": "{{ $env.GITLAB_TOKEN }}"
+        },
+        "body": {
+          "branch": "={{ $node['Generate Git Metadata'].json.branch_name }}",
+          "ref": "main"
+        }
+      },
+      "id": "23456789-0123-4567-8901-234567890123",
+      "name": "Create Git Branch",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [2000, 300]
+    },
+    {
+      "parameters": {
+        "url": "={{ $node['Set Customer Environment'].json.gitlab_url }}/api/v4/projects/{{ $env.GITLAB_PROJECT_ID }}/repository/files/playbooks%2F{{ $node['Generate Git Metadata'].json.branch_name }}%2Fplaybook.yml",
+        "method": "POST",
+        "authentication": "headerAuth",
+        "headerAuth": {
+          "name": "PRIVATE-TOKEN",
+          "value": "{{ $env.GITLAB_TOKEN }}"
+        },
+        "body": {
+          "branch": "={{ $node['Generate Git Metadata'].json.branch_name }}",
+          "content": "={{ $node['AI Playbook Generator'].json.playbook_yaml }}",
+          "commit_message": "={{ $node['Generate Git Metadata'].json.commit_message }} - Add main playbook"
+        }
+      },
+      "id": "34567890-1234-5678-9012-345678901234",
+      "name": "Commit Playbook",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [2200, 200]
+    },
+    {
+      "parameters": {
+        "url": "={{ $node['Set Customer Environment'].json.gitlab_url }}/api/v4/projects/{{ $env.GITLAB_PROJECT_ID }}/repository/files/playbooks%2F{{ $node['Generate Git Metadata'].json.branch_name }}%2Finventory.yml",
+        "method": "POST",
+        "authentication": "headerAuth",
+        "headerAuth": {
+          "name": "PRIVATE-TOKEN",
+          "value": "{{ $env.GITLAB_TOKEN }}"
+        },
+        "body": {
+          "branch": "={{ $node['Generate Git Metadata'].json.branch_name }}",
+          "content": "={{ $node['AI Playbook Generator'].json.inventory_yaml }}",
+          "commit_message": "={{ $node['Generate Git Metadata'].json.commit_message }} - Add inventory"
+        }
+      },
+      "id": "45678901-2345-6789-0123-456789012345",
+      "name": "Commit Inventory",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [2200, 300]
+    },
+    {
+      "parameters": {
+        "url": "={{ $node['Set Customer Environment'].json.gitlab_url }}/api/v4/projects/{{ $env.GITLAB_PROJECT_ID }}/repository/files/playbooks%2F{{ $node['Generate Git Metadata'].json.branch_name }}%2Fgroup_vars%2Fall.yml",
+        "method": "POST",
+        "authentication": "headerAuth",
+        "headerAuth": {
+          "name": "PRIVATE-TOKEN",
+          "value": "{{ $env.GITLAB_TOKEN }}"
+        },
+        "body": {
+          "branch": "={{ $node['Generate Git Metadata'].json.branch_name }}",
+          "content": "={{ $node['AI Playbook Generator'].json.variables_yaml }}",
+          "commit_message": "={{ $node['Generate Git Metadata'].json.commit_message }} - Add variables"
+        }
+      },
+      "id": "56789012-3456-7890-1234-567890123456",
+      "name": "Commit Variables",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [2200, 400]
+    },
+    {
+      "parameters": {
+        "url": "={{ $node['Set Customer Environment'].json.gitlab_url }}/api/v4/projects/{{ $env.GITLAB_PROJECT_ID }}/repository/files/playbooks%2F{{ $node['Generate Git Metadata'].json.branch_name }}%2Ftests%2Fvalidate.yml",
+        "method": "POST",
+        "authentication": "headerAuth",
+        "headerAuth": {
+          "name": "PRIVATE-TOKEN",
+          "value": "{{ $env.GITLAB_TOKEN }}"
+        },
+        "body": {
+          "branch": "={{ $node['Generate Git Metadata'].json.branch_name }}",
+          "content": "={{ $node['AI Playbook Generator'].json.test_yaml }}",
+          "commit_message": "={{ $node['Generate Git Metadata'].json.commit_message }} - Add validation tests"
+        }
+      },
+      "id": "67890123-4567-8901-2345-678901234567",
+      "name": "Commit Tests",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [2200, 500]
+    },
+    {
+      "parameters": {
+        "url": "={{ $node['Set Customer Environment'].json.gitlab_url }}/api/v4/projects/{{ $env.GITLAB_PROJECT_ID }}/repository/files/playbooks%2F{{ $node['Generate Git Metadata'].json.branch_name }}%2Frollback.yml",
+        "method": "POST",
+        "authentication": "headerAuth",
+        "headerAuth": {
+          "name": "PRIVATE-TOKEN",
+          "value": "{{ $env.GITLAB_TOKEN }}"
+        },
+        "body": {
+          "branch": "={{ $node['Generate Git Metadata'].json.branch_name }}",
+          "content": "={{ $node['AI Playbook Generator'].json.rollback_yaml }}",
+          "commit_message": "={{ $node['Generate Git Metadata'].json.commit_message }} - Add rollback plan"
+        }
+      },
+      "id": "78901234-5678-9012-3456-789012345678",
+      "name": "Commit Rollback",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [2200, 600]
+    },
+    {
+      "parameters": {
+        "url": "={{ $node['Set Customer Environment'].json.gitlab_url }}/api/v4/projects/{{ $env.GITLAB_PROJECT_ID }}/merge_requests",
+        "method": "POST",
+        "authentication": "headerAuth",
+        "headerAuth": {
+          "name": "PRIVATE-TOKEN",
+          "value": "{{ $env.GITLAB_TOKEN }}"
+        },
+        "body": {
+          "source_branch": "={{ $node['Generate Git Metadata'].json.branch_name }}",
+          "target_branch": "main",
+          "title": "={{ $node['Generate Git Metadata'].json.commit_message }}",
+          "description": "=## AI-Generated Network Automation\\n\\n**TFS Number:** {{ $node['Generate Git Metadata'].json.tfs_number }}\\n**Action:** {{ $node['AI Intent Parser'].json.action_type }} {{ $node['AI Intent Parser'].json.resource_type }}\\n**Location:** {{ $node['AI Intent Parser'].json.parameters.location }}\\n**Impact:** {{ $node['AI Intent Parser'].json.impact_assessment }}\\n**Urgency:** {{ $node['AI Intent Parser'].json.urgency }}\\n\\n### Parameters\\n```json\\n{{ JSON.stringify($node['AI Intent Parser'].json.parameters, null, 2) }}\\n```\\n\\n### NetBox Integration\\n- **Site:** {{ $node['Query NetBox - Site Data'].json.results[0].name }}\\n- **Devices:** {{ $node['Query NetBox - Devices'].json.results.length }} switches\\n- **Existing VLANs:** {{ $node['Query NetBox - Existing VLANs'].json.results.length }}\\n\\n### Files Included\\n- [x] Main playbook (`playbook.yml`)\\n- [x] Inventory file (`inventory.yml`)\\n- [x] Variables (`group_vars/all.yml`)\\n- [x] Validation tests (`tests/validate.yml`)\\n- [x] Rollback plan (`rollback.yml`)\\n\\n### Required Approvals\\n- [ ] Network Team Lead\\n- [ ] Security Review\\n- [ ] Change Advisory Board\\n\\n### Pre-deployment Checklist\\n- [ ] Syntax validation passed\\n- [ ] Dry-run completed successfully\\n- [ ] Staging environment tested\\n- [ ] Rollback plan verified\\n- [ ] Maintenance window scheduled\\n\\n**Auto-generated by n8n AI GitOps Pipeline**",
+          "assignee_ids": ["{{ $env.NETWORK_TEAM_LEAD_ID }}"],
+          "reviewer_ids": ["{{ $env.SECURITY_REVIEWER_ID }}"],
+          "labels": ["network-automation", "ai-generated", "{{ $node['AI Intent Parser'].json.urgency }}-priority"]
+        }
+      },
+      "id": "89012345-6789-0123-4567-890123456789",
+      "name": "Create Merge Request",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [2400, 300]
+    },
+    {
+      "parameters": {
+        "url": "={{ $env.SERVICENOW_URL }}/api/now/table/change_request",
+        "method": "POST",
+        "authentication": "basicAuth",
+        "basicAuth": {
+          "user": "{{ $env.SERVICENOW_USER }}",
+          "password": "{{ $env.SERVICENOW_PASSWORD }}"
+        },
+        "headers": {
+          "Content-Type": "application/json",
+          "Accept": "application/json"
+        },
+        "body": {
+          "short_description": "={{ $node['Generate Git Metadata'].json.commit_message }}",
+          "description": "=Automated network change request generated by AI GitOps pipeline\\n\\nTFS: {{ $node['Generate Git Metadata'].json.tfs_number }}\\nMR: {{ $node['Create Merge Request'].json.web_url }}\\nUrgency: {{ $node['AI Intent Parser'].json.urgency }}\\nImpact: {{ $node['AI Intent Parser'].json.impact_assessment }}",
+          "category": "Network",
+          "subcategory": "Configuration",
+          "u_automation_type": "AI-Generated",
+          "risk": "={{ $node['AI Intent Parser'].json.urgency === 'emergency' ? 'High' : ($node['AI Intent Parser'].json.urgency === 'high' ? 'Medium' : 'Low') }}",
+          "impact": "{{ $node['AI Intent Parser'].json.urgency === 'emergency' ? '1' : '3' }}",
+          "urgency": "{{ $node['AI Intent Parser'].json.urgency === 'emergency' ? '1' : '3' }}",
+          "u_rollback_plan": "Automated rollback available via Ansible playbook",
+          "justification": "={{ $json.user_request || 'Network automation request processed via AI pipeline' }}",
+          "u_git_branch": "={{ $node['Generate Git Metadata'].json.branch_name }}",
+          "u_merge_request": "={{ $node['Create Merge Request'].json.web_url }}"
+        }
+      },
+      "id": "90123456-7890-1234-5678-901234567890",
+      "name": "Create ServiceNow CR",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [2400, 500]
+    },
+    {
+      "parameters": {
+        "channel": "#network-automation",
+        "text": "=🤖 **AI GitOps Pipeline Initiated**\\n\\n📝 **TFS:** {{ $node['Generate Git Metadata'].json.tfs_number }}\\n🔧 **Action:** {{ $node['AI Intent Parser'].json.action_type }} {{ $node['AI Intent Parser'].json.resource_type }}\\n📍 **Location:** {{ $node['AI Intent Parser'].json.parameters.location }}\\n⚡ **Urgency:** {{ $node['AI Intent Parser'].json.urgency }}\\n\\n🔗 **Links:**\\n• [Merge Request]({{ $node['Create Merge Request'].json.web_url }})\\n• [ServiceNow CR]({{ $env.SERVICENOW_URL }}/nav_to.do?uri=change_request.do?sys_id={{ $node['Create ServiceNow CR'].json.result.sys_id }})\\n\\n👥 **Next Steps:**\\n• Network team review required\\n• Security scan in progress\\n• Awaiting CAB approval",
+        "username": "AI GitOps Bot",
+        "iconEmoji": "🤖"
+      },
+      "id": "01234567-8901-2345-6789-012345678902",
+      "name": "Notify Slack",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 1,
+      "position": [2600, 300],
+      "credentials": {
+        "slackApi": {
+          "id": "{{ $env.SLACK_CREDENTIAL_ID }}",
+          "name": "Slack API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "to": ["{{ $env.NETWORK_TEAM_EMAIL }}"],
+        "subject": "=🤖 AI Network Automation Request - {{ $node['Generate Git Metadata'].json.tfs_number }}",
+        "emailFormat": "html",
+        "message": "=<h2>AI-Generated Network Automation Request</h2>\\n\\n<table style=\\\"border-collapse: collapse; width: 100%;\\\">\\n<tr><td><strong>TFS Number:</strong></td><td>{{ $node['Generate Git Metadata'].json.tfs_number }}</td></tr>\\n<tr><td><strong>Action:</strong></td><td>{{ $node['AI Intent Parser'].json.action_type }} {{ $node['AI Intent Parser'].json.resource_type }}</td></tr>\\n<tr><td><strong>Location:</strong></td><td>{{ $node['AI Intent Parser'].json.parameters.location }}</td></tr>\\n<tr><td><strong>Urgency:</strong></td><td>{{ $node['AI Intent Parser'].json.urgency }}</td></tr>\\n<tr><td><strong>Impact:</strong></td><td>{{ $node['AI Intent Parser'].json.impact_assessment }}</td></tr>\\n</table>\\n\\n<h3>Required Actions:</h3>\\n<ul>\\n<li>Review <a href=\\\"{{ $node['Create Merge Request'].json.web_url }}\\\">GitLab Merge Request</a></li>\\n<li>Approve <a href=\\\"{{ $env.SERVICENOW_URL }}/nav_to.do?uri=change_request.do?sys_id={{ $node['Create ServiceNow CR'].json.result.sys_id }}\\\">ServiceNow Change Request</a></li>\\n<li>Validate generated Ansible playbooks</li>\\n<li>Schedule deployment window if approved</li>\\n</ul>\\n\\n<h3>AI-Generated Files:</h3>\\n<ul>\\n<li>Main Ansible playbook with network configuration</li>\\n<li>Dynamic inventory from NetBox data</li>\\n<li>Validation tests and rollback procedures</li>\\n<li>Documentation and change log</li>\\n</ul>\\n\\n<p><em>This is an automated message from the AI GitOps pipeline.</em></p>"
+      },
+      "id": "12345678-9012-3456-7890-123456789013",
+      "name": "Email Notification",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2,
+      "position": [2600, 500],
+      "credentials": {
+        "smtp": {
+          "id": "{{ $env.EMAIL_CREDENTIAL_ID }}",
+          "name": "SMTP Email"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "values": {
+          "string": [
+            {
+              "name": "pipeline_status",
+              "value": "initiated"
+            },
+            {
+              "name": "tfs_number",
+              "value": "={{ $node['Generate Git Metadata'].json.tfs_number }}"
+            },
+            {
+              "name": "merge_request_url",
+              "value": "={{ $node['Create Merge Request'].json.web_url }}"
+            },
+            {
+              "name": "servicenow_cr_id",
+              "value": "={{ $node['Create ServiceNow CR'].json.result.sys_id }}"
+            },
+            {
+              "name": "customer_id",
+              "value": "={{ $node['Set Customer Environment'].json.customer_id }}"
+            }
+          ]
+        }
+      },
+      "id": "23456789-0123-4567-8901-234567890124",
+      "name": "Pipeline Response",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 1,
+      "position": [2800, 300]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={\n  \"status\": \"success\",\n  \"message\": \"AI GitOps pipeline initiated successfully\",\n  \"data\": {\n    \"tfs_number\": \"{{ $node['Generate Git Metadata'].json.tfs_number }}\",\n    \"branch_name\": \"{{ $node['Generate Git Metadata'].json.branch_name }}\",\n    \"merge_request_url\": \"{{ $node['Create Merge Request'].json.web_url }}\",\n    \"servicenow_cr_id\": \"{{ $node['Create ServiceNow CR'].json.result.sys_id }}\",\n    \"action_type\": \"{{ $node['AI Intent Parser'].json.action_type }}\",\n    \"resource_type\": \"{{ $node['AI Intent Parser'].json.resource_type }}\",\n    \"urgency\": \"{{ $node['AI Intent Parser'].json.urgency }}\",\n    \"customer_id\": \"{{ $node['Set Customer Environment'].json.customer_id }}\",\n    \"next_steps\": [\n      \"Await network team review of merge request\",\n      \"Security scan will run automatically\",\n      \"CAB approval required for production deployment\",\n      \"Staging tests will be executed upon approval\"\n    ]\n  },\n  \"timestamp\": \"{{ new Date().toISOString() }}\"\n}",
+        "options": {}
+      },
+      "id": "34567890-1234-5678-9012-345678901235",
+      "name": "Webhook Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [3000, 300]
+    }
+  ],
+  "connections": {
+    "Webhook - AI Network Request": {
+      "main": [
+        [
+          {
+            "node": "Set Customer Environment",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set Customer Environment": {
+      "main": [
+        [
+          {
+            "node": "Check Request Type",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Request Type": {
+      "main": [
+        [
+          {
+            "node": "AI Intent Parser",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Manual Form Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Intent Parser": {
+      "main": [
+        [
+          {
+            "node": "Query NetBox - Site Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Manual Form Input": {
+      "main": [
+        [
+          {
+            "node": "Query NetBox - Site Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Query NetBox - Site Data": {
+      "main": [
+        [
+          {
+            "node": "Query NetBox - Devices",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Query NetBox - Devices": {
+      "main": [
+        [
+          {
+            "node": "Query NetBox - Existing VLANs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Query NetBox - Existing VLANs": {
+      "main": [
+        [
+          {
+            "node": "AI Playbook Generator",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Playbook Generator": {
+      "main": [
+        [
+          {
+            "node": "Generate Git Metadata",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate Git Metadata": {
+      "main": [
+        [
+          {
+            "node": "Create Git Branch",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Git Branch": {
+      "main": [
+        [
+          {
+            "node": "Commit Playbook",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Commit Inventory",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Commit Variables",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Commit Tests",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Commit Rollback",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Commit Playbook": {
+      "main": [
+        [
+          {
+            "node": "Create Merge Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Commit Inventory": {
+      "main": [
+        [
+          {
+            "node": "Create Merge Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Commit Variables": {
+      "main": [
+        [
+          {
+            "node": "Create Merge Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Commit Tests": {
+      "main": [
+        [
+          {
+            "node": "Create Merge Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Commit Rollback": {
+      "main": [
+        [
+          {
+            "node": "Create Merge Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Merge Request": {
+      "main": [
+        [
+          {
+            "node": "Create ServiceNow CR",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Notify Slack",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Email Notification",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create ServiceNow CR": {
+      "main": [
+        [
+          {
+            "node": "Pipeline Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Notify Slack": {
+      "main": [
+        [
+          {
+            "node": "Pipeline Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Email Notification": {
+      "main": [
+        [
+          {
+            "node": "Pipeline Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Pipeline Response": {
+      "main": [
+        [
+          {
+            "node": "Webhook Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "staticData": null,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "pinData": {},
+  "meta": {
+    "templateId": "ai-gitops-network-automation",
+    "templateCreatedBy": {
+      "id": "n8n-ai-assistant",
+      "name": "n8n AI Assistant"
+    }
+  },
+  "tags": [
+    {
+      "createdAt": "2024-08-11T00:00:00.000Z",
+      "updatedAt": "2024-08-11T00:00:00.000Z",
+      "id": "ai-automation",
+      "name": "AI Automation"
+    },
+    {
+      "createdAt": "2024-08-11T00:00:00.000Z", 
+      "updatedAt": "2024-08-11T00:00:00.000Z",
+      "id": "network-gitops",
+      "name": "Network GitOps"
+    },
+    {
+      "createdAt": "2024-08-11T00:00:00.000Z",
+      "updatedAt": "2024-08-11T00:00:00.000Z", 
+      "id": "multi-tenant",
+      "name": "Multi-Tenant"
+    }
+  ]
+}

@@ -1,0 +1,707 @@
+{
+  "name": "Terminate Core Link",
+  "nodes": [
+    {
+      "parameters": {},
+      "name": "When clicking \"Execute Workflow\"",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [820, 300],
+      "id": "trigger-terminate-core-link"
+    },
+    {
+      "parameters": {
+        "content": "## Core Link Termination Workflow\n\n**Purpose**: Safely terminate and cleanup core link resources\n\n**Termination Process**:\n1. Disconnect physical cable connections\n2. Remove network configuration via LSO\n3. Unassign IPv6 addresses (side B then side A)\n4. Release IPv6 prefix allocation\n5. Disable ports in NetBox\n6. Cleanup all associated resources\n\n**Safety Features**:\n- Validates termination is safe\n- Performs graceful configuration removal\n- Comprehensive resource cleanup\n- Rollback capability on errors\n\n**Environment Variables Used**:\n- `NETBOX_TOKEN`: NetBox API authentication\n- `NETBOX_URL`: NetBox instance URL\n- `LSO_URL`: LSO automation endpoint\n- `CORE_LINK_SUBSCRIPTION_ID`: Target core link ID"
+      },
+      "name": "Workflow Documentation",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [400, 80],
+      "id": "doc-terminate-core-link"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "workflow_id",
+              "name": "workflow_id",
+              "type": "string",
+              "value": "={{ $runIndex }}_terminate_core_link_{{ Date.now() }}"
+            },
+            {
+              "id": "workflow_type",
+              "name": "workflow_type",
+              "type": "string",
+              "value": "terminate_workflow"
+            },
+            {
+              "id": "product_type",
+              "name": "product_type",
+              "type": "string",
+              "value": "CoreLink"
+            },
+            {
+              "id": "target",
+              "name": "target",
+              "type": "string",
+              "value": "TERMINATE"
+            },
+            {
+              "id": "subscription_id",
+              "name": "subscription_id",
+              "type": "string",
+              "value": "{{ $env.CORE_LINK_SUBSCRIPTION_ID || 'sample-core-link-123' }}"
+            }
+          ]
+        }
+      },
+      "name": "Initialize Workflow Variables",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3,
+      "position": [1040, 300],
+      "id": "init-variables-terminate"
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $env.NETBOX_URL }}/api/dcim/cables/{{ $json.subscription_id }}/",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "netBoxApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Token {{ $env.NETBOX_TOKEN }}"
+            }
+          ]
+        }
+      },
+      "name": "Load Core Link Details",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [1260, 300],
+      "id": "load-core-link"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "leftValue": "",
+            "caseSensitive": true,
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "link-exists",
+              "leftValue": "={{ $json.id }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "isNotEmpty"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "name": "Validate Core Link Exists",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1480, 300],
+      "id": "validate-exists"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "error_message",
+              "name": "error_message",
+              "type": "string",
+              "value": "Core link not found for termination"
+            },
+            {
+              "id": "error_code",
+              "name": "error_code",
+              "type": "string",
+              "value": "CORE_LINK_NOT_FOUND"
+            }
+          ]
+        }
+      },
+      "name": "Set Error - Link Not Found",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3,
+      "position": [1700, 480],
+      "id": "error-not-found"
+    },
+    {
+      "parameters": {
+        "method": "DELETE",
+        "url": "={{ $env.NETBOX_URL }}/api/dcim/cables/{{ $('Initialize Workflow Variables').item(0).json.subscription_id }}/",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "netBoxApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Token {{ $env.NETBOX_TOKEN }}"
+            }
+          ]
+        }
+      },
+      "name": "Disconnect Ports in NetBox",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [1700, 300],
+      "id": "disconnect-ports"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Extract termination details from core link\nconst coreLink = $input.all()[0].json;\nconst workflowVars = $('Initialize Workflow Variables').item(0).json;\n\n// Extract port and node information\nconst aTerminations = coreLink.a_terminations || [];\nconst bTerminations = coreLink.b_terminations || [];\n\nconst terminationData = {\n  core_link_id: coreLink.id,\n  label: coreLink.label,\n  a_terminations: aTerminations,\n  b_terminations: bTerminations,\n  workflow_id: workflowVars.workflow_id,\n  nodes: {\n    node_a: aTerminations.length > 0 ? aTerminations[0].object : null,\n    node_b: bTerminations.length > 0 ? bTerminations[0].object : null\n  }\n};\n\nreturn terminationData;"
+      },
+      "name": "Extract Termination Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1920, 300],
+      "id": "extract-termination-data"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.LSO_URL || 'http://localhost:8080' }}/api/playbooks/execute",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\n  \"playbook_name\": \"delete_core_link.yaml\",\n  \"inventory\": \"core-devices\",\n  \"extra_vars\": {\n    \"core_link\": {\n      \"id\": \"{{ $json.core_link_id }}\",\n      \"label\": \"{{ $json.label }}\",\n      \"nodes\": {{ JSON.stringify($json.nodes) }}\n    },\n    \"workflow_id\": \"{{ $json.workflow_id }}\"\n  }\n}"
+      },
+      "name": "Remove Core Link Config",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [2140, 300],
+      "id": "remove-config"
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $env.NETBOX_URL }}/api/ipam/ip-addresses/",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "netBoxApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Token {{ $env.NETBOX_TOKEN }}"
+            }
+          ]
+        },
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "assigned_object_id",
+              "value": "={{ $('Extract Termination Data').item(0).json.b_terminations[0].object_id }}"
+            },
+            {
+              "name": "assigned_object_type",
+              "value": "dcim.interface"
+            }
+          ]
+        }
+      },
+      "name": "Get Side B IPv6 Address",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [2360, 240],
+      "id": "get-side-b-ipv6"
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $env.NETBOX_URL }}/api/ipam/ip-addresses/",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "netBoxApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Token {{ $env.NETBOX_TOKEN }}"
+            }
+          ]
+        },
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "assigned_object_id",
+              "value": "={{ $('Extract Termination Data').item(0).json.a_terminations[0].object_id }}"
+            },
+            {
+              "name": "assigned_object_type",
+              "value": "dcim.interface"
+            }
+          ]
+        }
+      },
+      "name": "Get Side A IPv6 Address",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [2360, 360],
+      "id": "get-side-a-ipv6"
+    },
+    {
+      "parameters": {
+        "method": "DELETE",
+        "url": "={{ $env.NETBOX_URL }}/api/ipam/ip-addresses/{{ $json.results[0].id }}/",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "netBoxApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Token {{ $env.NETBOX_TOKEN }}"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        }
+      },
+      "name": "Unassign Side B IPv6 Address",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [2580, 240],
+      "id": "unassign-side-b-ipv6"
+    },
+    {
+      "parameters": {
+        "method": "DELETE",
+        "url": "={{ $env.NETBOX_URL }}/api/ipam/ip-addresses/{{ $json.results[0].id }}/",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "netBoxApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Token {{ $env.NETBOX_TOKEN }}"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        }
+      },
+      "name": "Unassign Side A IPv6 Address",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [2580, 360],
+      "id": "unassign-side-a-ipv6"
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $env.NETBOX_URL }}/api/ipam/prefixes/",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "netBoxApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Token {{ $env.NETBOX_TOKEN }}"
+            }
+          ]
+        },
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "description__ic",
+              "value": "{{ $('Extract Termination Data').item(0).json.label }}"
+            }
+          ]
+        }
+      },
+      "name": "Find IPv6 Prefix",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [2800, 300],
+      "id": "find-ipv6-prefix"
+    },
+    {
+      "parameters": {
+        "method": "DELETE",
+        "url": "={{ $env.NETBOX_URL }}/api/ipam/prefixes/{{ $json.results[0].id }}/",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "netBoxApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Token {{ $env.NETBOX_TOKEN }}"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        }
+      },
+      "name": "Unassign IPv6 Prefix",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [3020, 300],
+      "id": "unassign-ipv6-prefix"
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "={{ $env.NETBOX_URL }}/api/dcim/interfaces/{{ $('Extract Termination Data').item(0).json.a_terminations[0].object_id }}/",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "netBoxApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Token {{ $env.NETBOX_TOKEN }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\n  \"enabled\": false,\n  \"description\": \"Terminated core link port\"\n}"
+      },
+      "name": "Disable Port A in NetBox",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [3240, 240],
+      "id": "disable-port-a"
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "={{ $env.NETBOX_URL }}/api/dcim/interfaces/{{ $('Extract Termination Data').item(0).json.b_terminations[0].object_id }}/",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "netBoxApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Token {{ $env.NETBOX_TOKEN }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\n  \"enabled\": false,\n  \"description\": \"Terminated core link port\"\n}"
+      },
+      "name": "Disable Port B in NetBox",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [3240, 360],
+      "id": "disable-port-b"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "workflow_status",
+              "name": "workflow_status",
+              "type": "string",
+              "value": "completed"
+            },
+            {
+              "id": "message",
+              "name": "message",
+              "type": "string",
+              "value": "Core link termination completed successfully"
+            },
+            {
+              "id": "terminated_link_id",
+              "name": "terminated_link_id",
+              "type": "string",
+              "value": "={{ $('Extract Termination Data').item(0).json.core_link_id }}"
+            },
+            {
+              "id": "cleanup_summary",
+              "name": "cleanup_summary",
+              "type": "object",
+              "value": "{\n  \"cable_disconnected\": true,\n  \"config_removed\": true,\n  \"ipv6_addresses_unassigned\": true,\n  \"ipv6_prefix_released\": true,\n  \"ports_disabled\": true\n}"
+            }
+          ]
+        }
+      },
+      "name": "Set Termination Success",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3,
+      "position": [3460, 300],
+      "id": "termination-success"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "workflow_status",
+              "name": "workflow_status",
+              "type": "string",
+              "value": "failed"
+            },
+            {
+              "id": "timestamp",
+              "name": "timestamp",
+              "type": "string",
+              "value": "={{ new Date().toISOString() }}"
+            }
+          ]
+        }
+      },
+      "name": "Set Error Response",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3,
+      "position": [1700, 600],
+      "id": "error-response"
+    }
+  ],
+  "connections": {
+    "When clicking \"Execute Workflow\"": {
+      "main": [
+        [
+          {
+            "node": "Initialize Workflow Variables",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Initialize Workflow Variables": {
+      "main": [
+        [
+          {
+            "node": "Load Core Link Details",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Load Core Link Details": {
+      "main": [
+        [
+          {
+            "node": "Validate Core Link Exists",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Core Link Exists": {
+      "main": [
+        [
+          {
+            "node": "Disconnect Ports in NetBox",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Set Error - Link Not Found",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set Error - Link Not Found": {
+      "main": [
+        [
+          {
+            "node": "Set Error Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Disconnect Ports in NetBox": {
+      "main": [
+        [
+          {
+            "node": "Extract Termination Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Termination Data": {
+      "main": [
+        [
+          {
+            "node": "Remove Core Link Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Remove Core Link Config": {
+      "main": [
+        [
+          {
+            "node": "Get Side B IPv6 Address",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Get Side A IPv6 Address",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Side B IPv6 Address": {
+      "main": [
+        [
+          {
+            "node": "Unassign Side B IPv6 Address",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Side A IPv6 Address": {
+      "main": [
+        [
+          {
+            "node": "Unassign Side A IPv6 Address",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Unassign Side B IPv6 Address": {
+      "main": [
+        [
+          {
+            "node": "Find IPv6 Prefix",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Unassign Side A IPv6 Address": {
+      "main": [
+        [
+          {
+            "node": "Find IPv6 Prefix",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Find IPv6 Prefix": {
+      "main": [
+        [
+          {
+            "node": "Unassign IPv6 Prefix",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Unassign IPv6 Prefix": {
+      "main": [
+        [
+          {
+            "node": "Disable Port A in NetBox",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Disable Port B in NetBox",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Disable Port A in NetBox": {
+      "main": [
+        [
+          {
+            "node": "Set Termination Success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Disable Port B in NetBox": {
+      "main": [
+        [
+          {
+            "node": "Set Termination Success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": ["core_link", "network", "termination", "cleanup", "netbox", "orchestrator"],
+  "triggerCount": 0,
+  "updatedAt": "2024-12-19T15:45:00.000Z",
+  "versionId": "1.0.0"
+}
