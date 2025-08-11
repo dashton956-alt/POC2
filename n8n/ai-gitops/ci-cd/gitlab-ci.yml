@@ -1,0 +1,328 @@
+# GitLab CI/CD Pipeline for Network Automation
+# File: .gitlab-ci.yml
+
+stages:
+  - validate
+  - security-scan
+  - test-staging
+  - deploy-staging
+  - test-production
+  - deploy-production
+  - rollback
+
+variables:
+  ANSIBLE_HOST_KEY_CHECKING: "false"
+  ANSIBLE_STDOUT_CALLBACK: "yaml"
+  ANSIBLE_RETRY_FILES_ENABLED: "false"
+
+# Validation Stage
+validate-playbook:
+  stage: validate
+  image: registry.gitlab.com/gitlab-org/terraform-images/stable:latest
+  before_script:
+    - apt-get update && apt-get install -y ansible-lint yamllint
+  script:
+    - echo "Validating Ansible playbook for TFS ${TFS_NUMBER}"
+    - yamllint playbooks/${TFS_NUMBER}/site.yml
+    - ansible-lint playbooks/${TFS_NUMBER}/site.yml
+    - ansible-playbook --syntax-check playbooks/${TFS_NUMBER}/site.yml -i inventories/${TFS_NUMBER}/hosts.yml
+  artifacts:
+    reports:
+      junit: validation-report.xml
+    expire_in: 1 week
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "api"
+
+validate-inventory:
+  stage: validate
+  image: python:3.9-alpine
+  script:
+    - pip install ansible netaddr
+    - python -c "
+import yaml
+import sys
+
+# Validate inventory file
+with open('inventories/${TFS_NUMBER}/hosts.yml', 'r') as f:
+    inventory = yaml.safe_load(f)
+
+# Check required groups exist
+required_groups = ['network_devices']
+for group in required_groups:
+    if group not in inventory:
+        print(f'Missing required group: {group}')
+        sys.exit(1)
+
+# Validate device entries
+for device in inventory.get('network_devices', {}):
+    if 'ansible_host' not in inventory['network_devices'][device]:
+        print(f'Missing ansible_host for device: {device}')
+        sys.exit(1)
+
+print('Inventory validation passed')
+"
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "api"
+
+# Security Scanning
+security-scan:
+  stage: security-scan
+  image: securecodewarrior/docker-ansible-security:latest
+  script:
+    - echo "Running security scans for TFS ${TFS_NUMBER}"
+    # Scan for hardcoded credentials
+    - grep -r "password\|secret\|key" playbooks/${TFS_NUMBER}/ && exit 1 || echo "No hardcoded secrets found"
+    # Validate no dangerous modules
+    - grep -r "shell\|command\|raw" playbooks/${TFS_NUMBER}/ && echo "Warning: Found shell/command modules" || echo "No dangerous modules found"
+    # Check for proper variable usage
+    - python -c "
+import yaml
+import re
+
+with open('playbooks/${TFS_NUMBER}/site.yml', 'r') as f:
+    content = f.read()
+
+# Check for unvaulted sensitive data patterns
+sensitive_patterns = [
+    r'password:\s*[^{]',
+    r'secret:\s*[^{]',
+    r'key:\s*[^{]'
+]
+
+for pattern in sensitive_patterns:
+    if re.search(pattern, content, re.IGNORECASE):
+        print(f'Security issue: Potential unvaulted sensitive data found')
+        exit(1)
+
+print('Security scan passed')
+"
+  allow_failure: true
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "api"
+
+# Staging Tests
+test-staging-connectivity:
+  stage: test-staging
+  image: ansible/ansible:latest
+  variables:
+    ENVIRONMENT: "staging"
+  script:
+    - echo "Testing connectivity to staging devices for TFS ${TFS_NUMBER}"
+    - ansible all -i inventories/${TFS_NUMBER}/hosts.yml -m ping --limit staging
+    - ansible all -i inventories/${TFS_NUMBER}/hosts.yml -m setup --limit staging
+  artifacts:
+    paths:
+      - staging-connectivity-results.json
+    expire_in: 1 week
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "api" && $ENVIRONMENT == "staging"
+
+validate-staging-config:
+  stage: test-staging
+  image: ansible/ansible:latest
+  variables:
+    ENVIRONMENT: "staging"
+  script:
+    - echo "Validating current staging configuration for TFS ${TFS_NUMBER}"
+    # Backup current config
+    - ansible-playbook backups/pre-change-backup.yml -i inventories/${TFS_NUMBER}/hosts.yml --limit staging
+    # Validate current state
+    - ansible-playbook tests/${TFS_NUMBER}/test.yml -i inventories/${TFS_NUMBER}/hosts.yml --limit staging --check
+  artifacts:
+    paths:
+      - backups/staging-${CI_PIPELINE_ID}-*.cfg
+    expire_in: 30 days
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "api" && $ENVIRONMENT == "staging"
+
+# Staging Deployment
+deploy-staging:
+  stage: deploy-staging
+  image: ansible/ansible:latest
+  variables:
+    ENVIRONMENT: "staging"
+  script:
+    - echo "Deploying to staging environment for TFS ${TFS_NUMBER}"
+    # Create staging-specific variables
+    - cp group_vars/all.yml group_vars/staging.yml
+    - echo "environment: staging" >> group_vars/staging.yml
+    - echo "dry_run: false" >> group_vars/staging.yml
+    
+    # Execute playbook
+    - ansible-playbook playbooks/${TFS_NUMBER}/site.yml 
+        -i inventories/${TFS_NUMBER}/hosts.yml 
+        --limit staging 
+        --extra-vars "tfs_number=${TFS_NUMBER} environment=staging"
+        
+    # Run post-deployment tests
+    - ansible-playbook tests/${TFS_NUMBER}/test.yml -i inventories/${TFS_NUMBER}/hosts.yml --limit staging
+  artifacts:
+    reports:
+      junit: staging-deployment-report.xml
+    paths:
+      - staging-deployment-${CI_PIPELINE_ID}.log
+    expire_in: 30 days
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "api" && $ENVIRONMENT == "staging"
+  when: manual
+  allow_failure: false
+
+# Production Tests (Pre-deployment validation)
+test-production-readiness:
+  stage: test-production
+  image: ansible/ansible:latest
+  variables:
+    ENVIRONMENT: "production"
+  script:
+    - echo "Validating production readiness for TFS ${TFS_NUMBER}"
+    - ansible all -i inventories/${TFS_NUMBER}/hosts.yml -m ping --limit production
+    # Check production dependencies
+    - ansible-playbook tests/${TFS_NUMBER}/dependency-check.yml -i inventories/${TFS_NUMBER}/hosts.yml --limit production
+    # Validate maintenance window
+    - python -c "
+from datetime import datetime, time
+import os
+
+# Check if we're in maintenance window (example: 2-6 AM)
+now = datetime.now().time()
+maintenance_start = time(2, 0)  # 2 AM
+maintenance_end = time(6, 0)    # 6 AM
+
+if not (maintenance_start <= now <= maintenance_end) and os.getenv('EMERGENCY_DEPLOYMENT') != 'true':
+    print('Deployment outside maintenance window. Set EMERGENCY_DEPLOYMENT=true to override.')
+    exit(1)
+print('Maintenance window validation passed')
+"
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "api" && $ENVIRONMENT == "production"
+
+# Production Deployment
+deploy-production:
+  stage: deploy-production
+  image: ansible/ansible:latest
+  variables:
+    ENVIRONMENT: "production"
+  script:
+    - echo "Deploying to PRODUCTION environment for TFS ${TFS_NUMBER}"
+    - echo "🚨 PRODUCTION DEPLOYMENT IN PROGRESS 🚨"
+    
+    # Final backup before changes
+    - ansible-playbook backups/pre-change-backup.yml -i inventories/${TFS_NUMBER}/hosts.yml --limit production
+    
+    # Create production variables
+    - cp group_vars/all.yml group_vars/production.yml
+    - echo "environment: production" >> group_vars/production.yml
+    - echo "dry_run: false" >> group_vars/production.yml
+    - echo "backup_enabled: true" >> group_vars/production.yml
+    
+    # Execute with careful error handling
+    - ansible-playbook playbooks/${TFS_NUMBER}/site.yml 
+        -i inventories/${TFS_NUMBER}/hosts.yml 
+        --limit production 
+        --extra-vars "tfs_number=${TFS_NUMBER} environment=production"
+        --diff
+        
+    # Immediate post-deployment verification
+    - sleep 30  # Allow configs to settle
+    - ansible-playbook tests/${TFS_NUMBER}/test.yml -i inventories/${TFS_NUMBER}/hosts.yml --limit production
+    
+    # Update ServiceNow
+    - curl -X PATCH "${SERVICENOW_URL}/api/now/table/change_request/${SERVICENOW_CR_SYS_ID}" 
+        -H "Authorization: Basic ${SERVICENOW_AUTH}" 
+        -H "Content-Type: application/json" 
+        -d '{"state": "3", "work_notes": "Deployment completed successfully via GitLab CI/CD Pipeline '${CI_PIPELINE_ID}'"}'
+        
+  artifacts:
+    reports:
+      junit: production-deployment-report.xml
+    paths:
+      - production-deployment-${CI_PIPELINE_ID}.log
+      - backups/production-${CI_PIPELINE_ID}-*.cfg
+    expire_in: 90 days
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "api" && $ENVIRONMENT == "production"
+  when: manual
+  allow_failure: false
+
+# Rollback Job (Manual trigger only)
+rollback-production:
+  stage: rollback
+  image: ansible/ansible:latest
+  variables:
+    ENVIRONMENT: "production"
+  script:
+    - echo "🚨 EMERGENCY ROLLBACK INITIATED for TFS ${TFS_NUMBER} 🚨"
+    
+    # Execute rollback playbook
+    - ansible-playbook rollback/${TFS_NUMBER}/rollback.yml 
+        -i inventories/${TFS_NUMBER}/hosts.yml 
+        --limit production 
+        --extra-vars "tfs_number=${TFS_NUMBER} environment=production rollback=true"
+        
+    # Verify rollback success
+    - ansible-playbook tests/${TFS_NUMBER}/rollback-test.yml -i inventories/${TFS_NUMBER}/hosts.yml --limit production
+    
+    # Update ServiceNow with rollback status
+    - curl -X PATCH "${SERVICENOW_URL}/api/now/table/change_request/${SERVICENOW_CR_SYS_ID}" 
+        -H "Authorization: Basic ${SERVICENOW_AUTH}" 
+        -H "Content-Type: application/json" 
+        -d '{"state": "4", "work_notes": "ROLLBACK completed via GitLab CI/CD Pipeline '${CI_PIPELINE_ID}'. Original change has been reverted."}'
+        
+  artifacts:
+    paths:
+      - rollback-${CI_PIPELINE_ID}.log
+    expire_in: 90 days
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "api" && $ENVIRONMENT == "production"
+  when: manual
+  allow_failure: false
+
+# Notification Jobs
+notify-success:
+  stage: .post
+  image: alpine:latest
+  before_script:
+    - apk add --no-cache curl
+  script:
+    - echo "Sending success notification for TFS ${TFS_NUMBER}"
+    # Slack notification
+    - curl -X POST -H 'Content-type: application/json' 
+        --data '{"text":"✅ Network automation deployment SUCCESS\n**TFS:** '${TFS_NUMBER}'\n**Environment:** '${ENVIRONMENT}'\n**Pipeline:** '${CI_PIPELINE_URL}'"}' 
+        ${SLACK_WEBHOOK_URL}
+    # Teams notification  
+    - curl -X POST -H 'Content-Type: application/json' 
+        -d '{"summary":"Deployment Success","themeColor":"00FF00","sections":[{"activityTitle":"Network Automation Success","activitySubtitle":"TFS: '${TFS_NUMBER}'","facts":[{"name":"Environment","value":"'${ENVIRONMENT}'"},{"name":"Pipeline","value":"'${CI_PIPELINE_ID}'"},{"name":"Status","value":"SUCCESS"}]}]}' 
+        ${TEAMS_WEBHOOK_URL}
+  rules:
+    - if: $CI_PIPELINE_STATUS == "success"
+
+notify-failure:
+  stage: .post
+  image: alpine:latest
+  before_script:
+    - apk add --no-cache curl
+  script:
+    - echo "Sending failure notification for TFS ${TFS_NUMBER}"
+    # Slack notification
+    - curl -X POST -H 'Content-type: application/json' 
+        --data '{"text":"❌ Network automation deployment FAILED\n**TFS:** '${TFS_NUMBER}'\n**Environment:** '${ENVIRONMENT}'\n**Pipeline:** '${CI_PIPELINE_URL}'\n**Action:** Manual intervention required"}' 
+        ${SLACK_WEBHOOK_URL}
+    # PagerDuty alert for production failures
+    - if [ "$ENVIRONMENT" = "production" ]; then
+        curl -X POST 'https://events.pagerduty.com/v2/enqueue' 
+          -H 'Content-Type: application/json' 
+          -d '{"routing_key":"'${PAGERDUTY_INTEGRATION_KEY}'","event_action":"trigger","payload":{"summary":"Production Network Deployment Failed - TFS '${TFS_NUMBER}'","severity":"critical","source":"GitLab CI/CD","component":"network-automation"}}';
+      fi
+  rules:
+    - if: $CI_PIPELINE_STATUS == "failed"
+
+# Cleanup job
+cleanup-artifacts:
+  stage: .post
+  image: alpine:latest
+  script:
+    - echo "Cleaning up temporary files for TFS ${TFS_NUMBER}"
+    - rm -f *.tmp
+    - rm -f /tmp/ansible-*
+  rules:
+    - when: always
