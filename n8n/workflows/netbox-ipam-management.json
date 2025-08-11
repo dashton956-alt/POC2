@@ -1,0 +1,407 @@
+{
+  "name": "NetBox IP Address Management",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "netbox-ipam",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-ipam-001",
+      "name": "Webhook Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1.1,
+      "position": [
+        240,
+        300
+      ],
+      "webhookId": "netbox-ipam-webhook"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "action-check-001",
+              "leftValue": "={{ $json.body.action }}",
+              "rightValue": "create_ip",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "or"
+        }
+      },
+      "id": "action-router-001",
+      "name": "Route Action",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        460,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "url": "http://host.docker.internal:8000/api/ipam/prefixes/?contains={{ $json.body.ip_address }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "httpHeaderAuth": {
+          "name": "Authorization",
+          "value": "Token {{ $credentials.netbox.token }}"
+        }
+      },
+      "id": "find-prefix-001",
+      "name": "Find Available Prefix",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        680,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "url": "http://host.docker.internal:8000/api/ipam/ip-addresses/",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "httpHeaderAuth": {
+          "name": "Authorization",
+          "value": "Token {{ $credentials.netbox.token }}"
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "address",
+              "value": "={{ $json.body.ip_address }}"
+            },
+            {
+              "name": "status",
+              "value": "active"
+            },
+            {
+              "name": "description",
+              "value": "={{ $json.body.description || 'Auto-assigned via n8n' }}"
+            },
+            {
+              "name": "dns_name",
+              "value": "={{ $json.body.dns_name || '' }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "create-ip-001",
+      "name": "Create IP Address",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        900,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "device-check-001",
+              "leftValue": "={{ $json.body.device_name }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "check-device-001",
+      "name": "Check if Device Specified",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        1120,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "url": "http://host.docker.internal:8000/api/dcim/devices/?name={{ $json.body.device_name }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "httpHeaderAuth": {
+          "name": "Authorization",
+          "value": "Token {{ $credentials.netbox.token }}"
+        }
+      },
+      "id": "find-device-001",
+      "name": "Find Device",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1340,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "PATCH",
+        "url": "http://host.docker.internal:8000/api/ipam/ip-addresses/{{ $('Create IP Address').item.json.id }}/",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "httpHeaderAuth": {
+          "name": "Authorization",
+          "value": "Token {{ $credentials.netbox.token }}"
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "assigned_object_type",
+              "value": "dcim.interface"
+            },
+            {
+              "name": "assigned_object_id",
+              "value": "={{ $json.results[0].interfaces[0].id }}"
+            }
+          ]
+        }
+      },
+      "id": "assign-to-device-001",
+      "name": "Assign IP to Device",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1560,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "response-001",
+              "name": "result",
+              "value": "={{ {\n  success: true,\n  ip_address: $('Create IP Address').item.json.address,\n  id: $('Create IP Address').item.json.id,\n  status: $('Create IP Address').item.json.status,\n  description: $('Create IP Address').item.json.description,\n  assigned_device: $json.body.device_name || null,\n  created_at: $('Create IP Address').item.json.created,\n  netbox_url: `http://localhost:8000/ipam/ip-addresses/${$('Create IP Address').item.json.id}/`\n} }}",
+              "type": "object"
+            }
+          ]
+        }
+      },
+      "id": "format-response-001",
+      "name": "Format Response",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.3,
+      "position": [
+        1340,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json.result }}"
+      },
+      "id": "response-001",
+      "name": "Send Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1560,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "error-response-001",
+              "name": "error",
+              "value": "={{ {\n  success: false,\n  message: 'Invalid action. Supported actions: create_ip',\n  received_action: $json.body.action || 'none',\n  supported_actions: ['create_ip']\n} }}",
+              "type": "object"
+            }
+          ]
+        }
+      },
+      "id": "error-format-001",
+      "name": "Format Error",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.3,
+      "position": [
+        680,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json.error }}",
+        "responseCode": 400
+      },
+      "id": "error-response-001",
+      "name": "Send Error Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        900,
+        400
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook Trigger": {
+      "main": [
+        [
+          {
+            "node": "Route Action",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Route Action": {
+      "main": [
+        [
+          {
+            "node": "Find Available Prefix",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Format Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Find Available Prefix": {
+      "main": [
+        [
+          {
+            "node": "Create IP Address",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create IP Address": {
+      "main": [
+        [
+          {
+            "node": "Check if Device Specified",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check if Device Specified": {
+      "main": [
+        [
+          {
+            "node": "Find Device",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Format Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Find Device": {
+      "main": [
+        [
+          {
+            "node": "Assign IP to Device",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Assign IP to Device": {
+      "main": [
+        [
+          {
+            "node": "Format Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Response": {
+      "main": [
+        [
+          {
+            "node": "Send Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Error": {
+      "main": [
+        [
+          {
+            "node": "Send Error Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "createdAt": "2025-08-11T00:00:00.000Z",
+  "id": "netbox-ipam-management-001",
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [
+    {
+      "createdAt": "2025-08-11T00:00:00.000Z",
+      "id": "netbox",
+      "name": "NetBox",
+      "updatedAt": "2025-08-11T00:00:00.000Z"
+    },
+    {
+      "createdAt": "2025-08-11T00:00:00.000Z",
+      "id": "ipam",
+      "name": "IPAM",
+      "updatedAt": "2025-08-11T00:00:00.000Z"
+    }
+  ],
+  "triggerCount": 1,
+  "updatedAt": "2025-08-11T00:00:00.000Z",
+  "versionId": "1"
+}

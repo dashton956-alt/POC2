@@ -1,0 +1,405 @@
+{
+  "name": "Multi-Tenant NetBox API Router",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "mt-netbox-api",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-router-001",
+      "name": "Multi-Tenant Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1.1,
+      "position": [240, 300],
+      "webhookId": "mt-netbox-webhook"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "customer-extraction-001",
+              "name": "customer_context",
+              "value": "={{ {\n  customer_id: $json.headers['x-customer-id'] || $json.body.customer_id || 'default',\n  tenant_prefix: $json.headers['x-tenant-prefix'] || $json.body.tenant_prefix || 'default',\n  api_action: $json.body.action || 'get_devices',\n  request_data: $json.body.data || {},\n  source_ip: $json.headers['x-forwarded-for'] || 'unknown'\n} }}",
+              "type": "object"
+            }
+          ]
+        }
+      },
+      "id": "extract-context-001",
+      "name": "Extract Customer Context",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.3,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "url": "http://host.docker.internal:5432",
+        "authentication": "genericCredentialType", 
+        "genericAuthType": "httpHeaderAuth",
+        "httpHeaderAuth": {
+          "name": "Authorization", 
+          "value": "Bearer {{ $credentials.config_db }}"
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "query",
+              "value": "SELECT netbox_url, api_token_name, webhook_prefix, config_json FROM customer_configs WHERE customer_id = '{{ $json.customer_context.customer_id }}'"
+            }
+          ]
+        }
+      },
+      "id": "get-customer-config-001", 
+      "name": "Get Customer Configuration",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [680, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "config-exists-001",
+              "leftValue": "={{ $json.data && $json.data.length > 0 }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "validate-customer-001",
+      "name": "Validate Customer Config",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [900, 300]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "dynamic-config-001",
+              "name": "netbox_config", 
+              "value": "={{ {\n  base_url: $json.data[0].netbox_url,\n  api_token: $credentials[$json.data[0].api_token_name].token,\n  customer_id: $('Extract Customer Context').item.json.customer_context.customer_id,\n  webhook_prefix: $json.data[0].webhook_prefix,\n  custom_config: JSON.parse($json.data[0].config_json || '{}')\n} }}",
+              "type": "object"
+            }
+          ]
+        }
+      },
+      "id": "build-dynamic-config-001",
+      "name": "Build Dynamic Config", 
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.3,
+      "position": [1120, 200]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "action-get-devices",
+              "leftValue": "={{ $('Extract Customer Context').item.json.customer_context.api_action }}",
+              "rightValue": "get_devices",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "or"
+        }
+      },
+      "id": "route-action-001",
+      "name": "Route API Action",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1340, 200]
+    },
+    {
+      "parameters": {
+        "url": "={{ $json.netbox_config.base_url }}/api/dcim/devices/",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth", 
+        "httpHeaderAuth": {
+          "name": "Authorization",
+          "value": "Token {{ $json.netbox_config.api_token }}"
+        },
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": false,
+              "responseFormat": "json"
+            }
+          }
+        }
+      },
+      "id": "get-netbox-devices-001",
+      "name": "Get NetBox Devices",
+      "type": "n8n-nodes-base.httpRequest", 
+      "typeVersion": 4.2,
+      "position": [1560, 100]
+    },
+    {
+      "parameters": {
+        "url": "={{ $json.netbox_config.base_url }}/api/ipam/ip-addresses/",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "httpHeaderAuth": {
+          "name": "Authorization", 
+          "value": "Token {{ $json.netbox_config.api_token }}"
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "address",
+              "value": "={{ $('Extract Customer Context').item.json.customer_context.request_data.ip_address }}"
+            },
+            {
+              "name": "status", 
+              "value": "active"
+            },
+            {
+              "name": "description",
+              "value": "Auto-assigned for customer {{ $json.netbox_config.customer_id }}"
+            }
+          ]
+        }
+      },
+      "id": "create-ip-address-001",
+      "name": "Create IP Address",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1560, 300]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "success-response-001",
+              "name": "response",
+              "value": "={{ {\n  success: true,\n  customer_id: $json.netbox_config.customer_id,\n  action: $('Extract Customer Context').item.json.customer_context.api_action,\n  data: $json.results || $json,\n  timestamp: new Date().toISOString(),\n  netbox_url: $json.netbox_config.base_url,\n  webhook_prefix: $json.netbox_config.webhook_prefix\n} }}",
+              "type": "object"
+            }
+          ]
+        }
+      },
+      "id": "format-success-response-001", 
+      "name": "Format Success Response",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.3,
+      "position": [1780, 200]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json.response }}"
+      },
+      "id": "send-success-response-001",
+      "name": "Send Success Response", 
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [2000, 200]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "error-response-001",
+              "name": "error_response",
+              "value": "={{ {\n  success: false,\n  error: 'Customer configuration not found',\n  customer_id: $('Extract Customer Context').item.json.customer_context.customer_id,\n  message: 'Please ensure customer is properly configured in the system',\n  timestamp: new Date().toISOString()\n} }}",
+              "type": "object"
+            }
+          ]
+        }
+      },
+      "id": "format-error-response-001",
+      "name": "Format Error Response",
+      "type": "n8n-nodes-base.set", 
+      "typeVersion": 3.3,
+      "position": [1120, 400]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json.error_response }}",
+        "responseCode": 404
+      },
+      "id": "send-error-response-001",
+      "name": "Send Error Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1340, 400]
+    }
+  ],
+  "connections": {
+    "Multi-Tenant Webhook": {
+      "main": [
+        [
+          {
+            "node": "Extract Customer Context",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Customer Context": {
+      "main": [
+        [
+          {
+            "node": "Get Customer Configuration",
+            "type": "main", 
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Customer Configuration": {
+      "main": [
+        [
+          {
+            "node": "Validate Customer Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Customer Config": {
+      "main": [
+        [
+          {
+            "node": "Build Dynamic Config",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Format Error Response", 
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Dynamic Config": {
+      "main": [
+        [
+          {
+            "node": "Route API Action",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Route API Action": {
+      "main": [
+        [
+          {
+            "node": "Get NetBox Devices",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Create IP Address",
+            "type": "main", 
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get NetBox Devices": {
+      "main": [
+        [
+          {
+            "node": "Format Success Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create IP Address": {
+      "main": [
+        [
+          {
+            "node": "Format Success Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Success Response": {
+      "main": [
+        [
+          {
+            "node": "Send Success Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Error Response": {
+      "main": [
+        [
+          {
+            "node": "Send Error Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "createdAt": "2025-08-11T00:00:00.000Z",
+  "id": "multi-tenant-netbox-router-001",
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [
+    {
+      "createdAt": "2025-08-11T00:00:00.000Z",
+      "id": "multi-tenant",
+      "name": "Multi-Tenant",
+      "updatedAt": "2025-08-11T00:00:00.000Z"
+    },
+    {
+      "createdAt": "2025-08-11T00:00:00.000Z",
+      "id": "netbox", 
+      "name": "NetBox",
+      "updatedAt": "2025-08-11T00:00:00.000Z"
+    }
+  ],
+  "triggerCount": 1,
+  "updatedAt": "2025-08-11T00:00:00.000Z",
+  "versionId": "1"
+}

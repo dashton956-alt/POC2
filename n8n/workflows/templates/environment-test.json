@@ -1,0 +1,120 @@
+{
+  "name": "Environment Variables Test",
+  "active": false,
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "env-test",
+        "options": {}
+      },
+      "id": "webhook-test",
+      "name": "Test Environment Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [200, 300]
+    },
+    {
+      "parameters": {
+        "values": {
+          "string": [
+            {
+              "name": "netbox_url",
+              "value": "={{ $env.NETBOX_URL }}"
+            },
+            {
+              "name": "netbox_token_exists",
+              "value": "={{ $env.NETBOX_TOKEN ? 'YES' : 'NO' }}"
+            },
+            {
+              "name": "customer_id", 
+              "value": "={{ $env.CUSTOMER_ID }}"
+            },
+            {
+              "name": "customer_name",
+              "value": "={{ $env.CUSTOMER_NAME }}"
+            },
+            {
+              "name": "openai_model",
+              "value": "={{ $env.OPENAI_MODEL }}"
+            }
+          ]
+        }
+      },
+      "id": "show-env-vars",
+      "name": "Show Environment Variables",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 1,
+      "position": [400, 300]
+    },
+    {
+      "parameters": {
+        "url": "={{ $env.NETBOX_URL }}/api/dcim/sites/",
+        "authentication": "headerAuth",
+        "headerAuth": {
+          "name": "Authorization",
+          "value": "Token {{ $env.NETBOX_TOKEN }}"
+        },
+        "options": {}
+      },
+      "id": "test-netbox-api",
+      "name": "Test NetBox API",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [600, 300]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={\n  \"status\": \"success\",\n  \"message\": \"Environment variables test completed\",\n  \"environment\": {\n    \"netbox_url\": \"{{ $node['Show Environment Variables'].json.netbox_url }}\",\n    \"netbox_token_configured\": \"{{ $node['Show Environment Variables'].json.netbox_token_exists }}\",\n    \"customer_id\": \"{{ $node['Show Environment Variables'].json.customer_id }}\",\n    \"customer_name\": \"{{ $node['Show Environment Variables'].json.customer_name }}\",\n    \"openai_model\": \"{{ $node['Show Environment Variables'].json.openai_model }}\"\n  },\n  \"netbox_api_test\": {\n    \"sites_count\": {{ $node['Test NetBox API'].json.count }},\n    \"api_accessible\": true\n  },\n  \"timestamp\": \"{{ new Date().toISOString() }}\"\n}",
+        "options": {}
+      },
+      "id": "test-response",
+      "name": "Return Test Results",
+      "type": "n8n-nodes-base.respondToWebhook", 
+      "typeVersion": 1,
+      "position": [800, 300]
+    }
+  ],
+  "connections": {
+    "Test Environment Webhook": {
+      "main": [
+        [
+          {
+            "node": "Show Environment Variables",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Show Environment Variables": {
+      "main": [
+        [
+          {
+            "node": "Test NetBox API",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Test NetBox API": {
+      "main": [
+        [
+          {
+            "node": "Return Test Results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "staticData": null,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "pinData": {},
+  "tags": []
+}

@@ -1,0 +1,137 @@
+{
+  "name": "AI Network Automation - Quick Start",
+  "active": false,
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "ai-network-test",
+        "options": {}
+      },
+      "id": "webhook-start",
+      "name": "Webhook Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [200, 300]
+    },
+    {
+      "parameters": {
+        "values": {
+          "string": [
+            {
+              "name": "netbox_url",
+              "value": "http://localhost:8000"
+            },
+            {
+              "name": "customer_id",
+              "value": "demo-corp"
+            }
+          ]
+        }
+      },
+      "id": "set-config",
+      "name": "Set Configuration",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 1,
+      "position": [400, 300]
+    },
+    {
+      "parameters": {
+        "url": "={{ $env.NETBOX_URL || 'http://localhost:8000' }}/api/dcim/sites/",
+        "authentication": "headerAuth",
+        "headerAuth": {
+          "name": "Authorization",
+          "value": "Token {{ $env.NETBOX_TOKEN }}"
+        },
+        "options": {}
+      },
+      "id": "netbox-query",
+      "name": "Query NetBox Sites",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [600, 300]
+    },
+    {
+      "parameters": {
+        "model": "={{ $env.OPENAI_MODEL || 'gpt-4' }}",
+        "prompt": "=You are a network automation AI. Based on this request: {{ $json.user_request }}\n\nAnd these NetBox sites: {{ JSON.stringify($node['Query NetBox Sites'].json.results) }}\n\nGenerate a simple Ansible playbook for VLAN creation. Return just the YAML content.",
+        "options": {}
+      },
+      "id": "ai-generator",
+      "name": "AI Playbook Generator",
+      "type": "n8n-nodes-base.openAi",
+      "typeVersion": 1,
+      "position": [800, 300],
+      "credentials": {
+        "openAiApi": {
+          "id": "{{ $env.OPENAI_CREDENTIAL_ID || 'openai-cred' }}",
+          "name": "OpenAI API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={\n  \"status\": \"success\",\n  \"message\": \"AI network automation completed\",\n  \"data\": {\n    \"user_request\": \"{{ $json.user_request }}\",\n    \"netbox_sites\": {{ $node['Query NetBox Sites'].json.results.length }},\n    \"generated_playbook\": \"{{ $node['AI Playbook Generator'].json.text }}\",\n    \"timestamp\": \"{{ new Date().toISOString() }}\"\n  }\n}",
+        "options": {}
+      },
+      "id": "webhook-response",
+      "name": "Return Results",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [1000, 300]
+    }
+  ],
+  "connections": {
+    "Webhook Trigger": {
+      "main": [
+        [
+          {
+            "node": "Set Configuration",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set Configuration": {
+      "main": [
+        [
+          {
+            "node": "Query NetBox Sites",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Query NetBox Sites": {
+      "main": [
+        [
+          {
+            "node": "AI Playbook Generator",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Playbook Generator": {
+      "main": [
+        [
+          {
+            "node": "Return Results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "staticData": null,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "pinData": {},
+  "tags": []
+}

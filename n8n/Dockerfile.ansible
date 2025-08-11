@@ -1,0 +1,82 @@
+# Dockerfile for Ansible Pipeline Executor
+FROM python:3.11-slim
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y \
+    openssh-client \
+    git \
+    curl \
+    jq \
+    vim \
+    telnet \
+    iputils-ping \
+    net-tools \
+    dnsutils \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Ansible and network automation dependencies
+RUN pip install --no-cache-dir \
+    ansible \
+    ansible-core \
+    netmiko \
+    napalm \
+    paramiko \
+    requests \
+    jinja2 \
+    pyyaml \
+    netaddr \
+    dnspython \
+    hvac \
+    # GitLab CI/CD tools
+    python-gitlab \
+    # ServiceNow integration
+    pysnow \
+    # Monitoring and logging
+    prometheus-client \
+    # Network device libraries
+    cisco-gnmi \
+    ncclient \
+    # NetBox integration
+    pynetbox
+
+    # Install Ansible collections for network automation
+    RUN ansible-galaxy collection install \
+        cisco.ios \
+        cisco.nxos \
+        cisco.iosxr \
+        arista.eos \
+        ansible.netcommon \
+        community.network \
+        ansible.posix \
+        community.general \
+        --ignore-errors
+
+    # Create ansible user
+    RUN useradd -m -s /bin/bash ansible && \
+        echo 'ansible ALL=(ALL) NOPASSWD:ALL' >> /etc/sudoers
+
+# Create necessary directories
+RUN mkdir -p /opt/{ai-gitops,playbooks,inventories,backups,logs} && \
+    chown -R ansible:ansible /opt/
+
+# Set up Ansible configuration
+COPY ansible.cfg /etc/ansible/ansible.cfg
+
+# Switch to ansible user
+USER ansible
+WORKDIR /opt
+
+# Set environment variables
+ENV ANSIBLE_CONFIG=/etc/ansible/ansible.cfg
+ENV ANSIBLE_HOST_KEY_CHECKING=False
+ENV ANSIBLE_STDOUT_CALLBACK=yaml
+ENV ANSIBLE_RETRY_FILES_ENABLED=False
+ENV ANSIBLE_LOG_PATH=/opt/logs/ansible.log
+ENV PYTHONPATH=/opt/ai-gitops/scripts:$PYTHONPATH
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
+    CMD ansible --version || exit 1
+
+# Default command
+CMD ["/bin/bash", "-c", "tail -f /dev/null"]

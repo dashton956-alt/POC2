@@ -1,0 +1,276 @@
+{
+  "name": "NetBox Device Discovery",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 15
+            }
+          ]
+        }
+      },
+      "id": "fa4b0fc8-5b84-43f6-a3e2-b4c4d4a1c987",
+      "name": "Every 15 Minutes",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        240,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "url": "http://host.docker.internal:8000/api/dcim/devices/",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "httpHeaderAuth": {
+          "name": "Authorization",
+          "value": "Token {{ $credentials.netbox.token }}"
+        },
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": false,
+              "responseFormat": "json"
+            }
+          }
+        }
+      },
+      "id": "12345678-1234-1234-1234-123456789abc",
+      "name": "Get NetBox Devices",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        460,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "c7c4f32c-7c1d-4c6e-9f4d-8a2b3c4d5e6f",
+              "leftValue": "={{ $json.results.length }}",
+              "rightValue": 0,
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "abc12345-1234-1234-1234-123456789def",
+      "name": "Check if Devices Found",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        680,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "aggregate": "aggregateAllItemData",
+        "destinationFieldName": "devices",
+        "options": {}
+      },
+      "id": "def67890-1234-1234-1234-123456789ghi",
+      "name": "Aggregate Device Data",
+      "type": "n8n-nodes-base.aggregate",
+      "typeVersion": 1,
+      "position": [
+        900,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "url": "http://host.docker.internal:8000/api/dcim/interfaces/?device_id={{ $json.id }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "httpHeaderAuth": {
+          "name": "Authorization",
+          "value": "Token {{ $credentials.netbox.token }}"
+        }
+      },
+      "id": "ghi12345-1234-1234-1234-123456789jkl",
+      "name": "Get Device Interfaces",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        900,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "combinationMode": "multiplex",
+        "options": {}
+      },
+      "id": "jkl67890-1234-1234-1234-123456789mno",
+      "name": "Combine Device and Interface Data",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 2.1,
+      "position": [
+        1120,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "mno12345-1234-1234-1234-123456789pqr",
+              "name": "enriched_device",
+              "value": "={{ {\n  id: $('Get NetBox Devices').item.json.id,\n  name: $('Get NetBox Devices').item.json.name,\n  device_type: $('Get NetBox Devices').item.json.device_type.display,\n  status: $('Get NetBox Devices').item.json.status.label,\n  site: $('Get NetBox Devices').item.json.site.name,\n  rack: $('Get NetBox Devices').item.json.rack?.name || 'N/A',\n  primary_ip: $('Get NetBox Devices').item.json.primary_ip4?.address || 'N/A',\n  interfaces_count: $('Get Device Interfaces').item.json.results.length,\n  last_updated: new Date().toISOString()\n} }}",
+              "type": "object"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "pqr67890-1234-1234-1234-123456789stu",
+      "name": "Enrich Device Data",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.3,
+      "position": [
+        1340,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## NetBox Device Discovery Report\n\n**Discovery Time:** {{ new Date().toISOString() }}\n\n**Devices Found:** {{ $json.length }}\n\n{% for device in $json %}\n### {{ device.name }}\n- **Type:** {{ device.device_type }}\n- **Status:** {{ device.status }}\n- **Site:** {{ device.site }}\n- **Rack:** {{ device.rack }}\n- **Primary IP:** {{ device.primary_ip }}\n- **Interfaces:** {{ device.interfaces_count }}\n- **Last Updated:** {{ device.last_updated }}\n\n{% endfor %}",
+        "options": {}
+      },
+      "id": "stu12345-1234-1234-1234-123456789vwx",
+      "name": "Generate Report",
+      "type": "n8n-nodes-base.markdown",
+      "typeVersion": 1,
+      "position": [
+        1560,
+        300
+      ]
+    }
+  ],
+  "connections": {
+    "Every 15 Minutes": {
+      "main": [
+        [
+          {
+            "node": "Get NetBox Devices",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get NetBox Devices": {
+      "main": [
+        [
+          {
+            "node": "Check if Devices Found",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check if Devices Found": {
+      "main": [
+        [
+          {
+            "node": "Aggregate Device Data",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Get Device Interfaces",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Aggregate Device Data": {
+      "main": [
+        [
+          {
+            "node": "Combine Device and Interface Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Device Interfaces": {
+      "main": [
+        [
+          {
+            "node": "Combine Device and Interface Data",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Combine Device and Interface Data": {
+      "main": [
+        [
+          {
+            "node": "Enrich Device Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Enrich Device Data": {
+      "main": [
+        [
+          {
+            "node": "Generate Report",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "createdAt": "2025-08-11T00:00:00.000Z",
+  "id": "netbox-device-discovery-001",
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [
+    {
+      "createdAt": "2025-08-11T00:00:00.000Z",
+      "id": "netbox",
+      "name": "NetBox",
+      "updatedAt": "2025-08-11T00:00:00.000Z"
+    },
+    {
+      "createdAt": "2025-08-11T00:00:00.000Z", 
+      "id": "network-automation",
+      "name": "Network Automation",
+      "updatedAt": "2025-08-11T00:00:00.000Z"
+    }
+  ],
+  "triggerCount": 1,
+  "updatedAt": "2025-08-11T00:00:00.000Z",
+  "versionId": "1"
+}
