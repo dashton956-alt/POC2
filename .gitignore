@@ -1,1 +1,73 @@
-netbox-docker/
+# Sensitive environment files and credentials
+**/.env
+**/*.env
+!**/.env.example
+!**/.env.template
+
+# Sensitive configuration files
+**/env/
+**/secrets/
+**/*secret*
+**/*credential*.json
+**/*password*
+**/*token*
+**/private-key*
+**/cert*
+**/ssl*
+
+# NetBox sensitive files (keep structure, exclude sensitive data)
+netbox-docker/env/
+netbox-docker/configuration/ldap/
+netbox-docker/startup_scripts/
+netbox-docker/initializers/
+netbox-docker/media/
+netbox-docker/reports/
+netbox-docker/scripts/
+
+# Database files and backups
+**/*.db
+**/*.sqlite
+**/*.sqlite3
+**/db.sqlite3
+**/*.dump
+**/*.sql
+**/postgres-data/
+**/redis-data/
+
+# Docker runtime files
+**/volumes/
+**/data/
+**/.docker/
+
+# Logs containing potentially sensitive information
+**/logs/
+**/*.log
+**/log/
+
+# OAuth2 and authentication files
+**/oauth2/client/client-credentials.json
+**/auth-tokens/
+**/jwt-tokens/
+
+# IDE and editor files
+.vscode/settings.json
+.vscode/launch.json
+.idea/
+*.swp
+*.swo
+*~
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Temporary files
+*.tmp
+*.temp
+/tmp/
+temp/
