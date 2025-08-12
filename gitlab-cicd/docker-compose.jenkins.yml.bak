@@ -1,0 +1,111 @@
+version: '3.8'
+
+services:
+  jenkins:
+    build:
+      context: .
+      dockerfile: Dockerfile.jenkins.minimal
+    container_name: poc2-jenkins
+    ports:
+      - "8080:8080"
+      - "50000:50000"
+    volumes:
+      - jenkins_home:/var/jenkins_home
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./scripts:/opt/ci-scripts:ro
+      - ./jenkins:/opt/pipelines:ro
+    environment:
+      - JENKINS_ADMIN_PASSWORD=${JENKINS_ADMIN_PASSWORD:-admin123}
+      - NETBOX_URL=${NETBOX_URL:-http://netbox:8000}
+      - NETBOX_TOKEN=${NETBOX_TOKEN:-}
+      - N8N_URL=${N8N_URL:-http://n8n:5678}
+      - N8N_API_KEY=${N8N_API_KEY:-}
+      - ENVIRONMENT=${ENVIRONMENT:-development}
+      - GIT_REPO_URL=${GIT_REPO_URL:-https://github.com/dashton956-alt/POC2.git}
+      - DOCKER_REGISTRY_USER=${DOCKER_REGISTRY_USER:-}
+      - DOCKER_REGISTRY_PASSWORD=${DOCKER_REGISTRY_PASSWORD:-}
+      - SMTP_HOST=${SMTP_HOST:-}
+      - SMTP_PORT=${SMTP_PORT:-25}
+      - SLACK_WEBHOOK=${SLACK_WEBHOOK:-}
+    networks:
+      - poc2-network
+    depends_on:
+      - netbox
+      - n8n
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/login"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  netbox:
+    image: netboxcommunity/netbox:latest
+    container_name: poc2-netbox
+    ports:
+      - "8000:8080"
+    environment:
+      - ALLOWED_HOSTS=*
+      - DB_HOST=netbox-postgres
+      - DB_NAME=netbox
+      - DB_USER=netbox
+      - DB_PASSWORD=netbox_password
+      - SECRET_KEY=your-secret-key-here
+      - REDIS_HOST=netbox-redis
+      - REDIS_SSL=false
+    depends_on:
+      - netbox-postgres
+      - netbox-redis
+    networks:
+      - poc2-network
+    restart: unless-stopped
+
+  netbox-postgres:
+    image: postgres:13
+    container_name: poc2-netbox-db
+    environment:
+      - POSTGRES_DB=netbox
+      - POSTGRES_USER=netbox
+      - POSTGRES_PASSWORD=netbox_password
+    volumes:
+      - netbox_postgres_data:/var/lib/postgresql/data
+    networks:
+      - poc2-network
+    restart: unless-stopped
+
+  netbox-redis:
+    image: redis:7-alpine
+    container_name: poc2-netbox-redis
+    networks:
+      - poc2-network
+    restart: unless-stopped
+
+  n8n:
+    image: n8nio/n8n:latest
+    container_name: poc2-n8n
+    ports:
+      - "5678:5678"
+    environment:
+      - N8N_BASIC_AUTH_ACTIVE=true
+      - N8N_BASIC_AUTH_USER=admin
+      - N8N_BASIC_AUTH_PASSWORD=admin123
+      - WEBHOOK_URL=http://n8n:5678/
+      - GENERIC_TIMEZONE=UTC
+    volumes:
+      - n8n_data:/home/node/.n8n
+    networks:
+      - poc2-network
+    restart: unless-stopped
+
+volumes:
+  jenkins_home:
+    driver: local
+  netbox_postgres_data:
+    driver: local
+  n8n_data:
+    driver: local
+
+networks:
+  poc2-network:
+    driver: bridge

@@ -1,0 +1,317 @@
+variables:
+  DOCKER_DRIVER: overlay2
+  DOCKER_TLS_CERTDIR: "/certs"
+  NETBOX_URL: "http://netbox:8000"
+  N8N_URL: "http://n8n:5678"
+  
+stages:
+  - validate
+  - test
+  - build
+  - deploy-dev
+  - deploy-staging
+  - deploy-prod
+  - cleanup
+
+# Global before_script
+before_script:
+  - echo "Starting pipeline for $CI_PROJECT_NAME"
+  - echo "Environment: $CI_ENVIRONMENT_NAME"
+  - echo "Commit: $CI_COMMIT_SHORT_SHA"
+
+# Validation Stage
+validate:syntax:
+  stage: validate
+  image: gitlab-cicd:latest
+  script:
+    - /app/scripts/pipeline-orchestrator.sh init
+    - /app/scripts/pipeline-orchestrator.sh health
+  artifacts:
+    reports:
+      junit: reports/validation.xml
+    paths:
+      - logs/
+    expire_in: 1 week
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+
+validate:security:
+  stage: validate
+  image: gitlab-cicd:latest
+  script:
+    - echo "Running security scans..."
+    - |
+      # Check for sensitive data in configs
+      if grep -r "password\|secret\|token" configs/ --include="*.yml" --include="*.yaml" 2>/dev/null; then
+        echo "Warning: Potential sensitive data found in configuration files"
+      fi
+    - |
+      # Validate SSL certificates if present
+      if [ -d "certs/" ]; then
+        find certs/ -name "*.crt" -exec openssl x509 -in {} -text -noout \; || true
+      fi
+  allow_failure: true
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+
+# Test Stage
+test:integration:
+  stage: test
+  image: gitlab-cicd:latest
+  services:
+    - name: postgres:13
+      alias: postgres
+      variables:
+        POSTGRES_DB: netbox
+        POSTGRES_USER: netbox
+        POSTGRES_PASSWORD: J5brHrAXFLQSif0K
+  variables:
+    DATABASE_URL: "postgresql://netbox:J5brHrAXFLQSif0K@postgres:5432/netbox"
+    REDIS_URL: "redis://redis:6379/0"
+  script:
+    - /app/scripts/pipeline-orchestrator.sh test
+  artifacts:
+    reports:
+      junit: reports/test-results.xml
+      coverage: reports/coverage.xml
+    paths:
+      - reports/
+      - logs/
+    expire_in: 1 week
+  coverage: '/TOTAL.*\s+(\d+%)$/'
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+
+test:workflows:
+  stage: test
+  image: gitlab-cicd:latest
+  script:
+    - echo "Testing n8n workflows..."
+    - /app/scripts/n8n-integration.sh validate
+    - echo "Testing NetBox configurations..."
+    - /app/scripts/netbox-integration.sh validate
+  artifacts:
+    paths:
+      - reports/
+    expire_in: 1 week
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+
+# Build Stage
+build:artifacts:
+  stage: build
+  image: gitlab-cicd:latest
+  script:
+    - /app/scripts/pipeline-orchestrator.sh build
+  artifacts:
+    name: "$CI_PROJECT_NAME-$CI_COMMIT_SHORT_SHA"
+    paths:
+      - artifacts/
+      - reports/
+    expire_in: 1 month
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+    - if: $CI_COMMIT_TAG
+
+build:docker:
+  stage: build
+  image: docker:latest
+  services:
+    - docker:dind
+  variables:
+    DOCKER_IMAGE_TAG: $CI_REGISTRY_IMAGE:$CI_COMMIT_SHORT_SHA
+  script:
+    - echo "Building GitLab CI/CD Docker image..."
+    - cd gitlab-cicd
+    - docker build -t $DOCKER_IMAGE_TAG .
+    - docker tag $DOCKER_IMAGE_TAG $CI_REGISTRY_IMAGE:latest
+    - echo $CI_REGISTRY_PASSWORD | docker login -u $CI_REGISTRY_USER --password-stdin $CI_REGISTRY
+    - docker push $DOCKER_IMAGE_TAG
+    - docker push $CI_REGISTRY_IMAGE:latest
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+    - if: $CI_COMMIT_TAG
+
+# Development Deployment
+deploy:development:
+  stage: deploy-dev
+  image: gitlab-cicd:latest
+  environment:
+    name: development
+    url: http://dev.poc2.local
+  variables:
+    ENVIRONMENT: "development"
+    NETBOX_URL: "http://netbox-dev:8000"
+    N8N_URL: "http://n8n-dev:5678"
+  script:
+    - /app/scripts/pipeline-orchestrator.sh deploy
+  artifacts:
+    paths:
+      - reports/
+      - logs/
+    expire_in: 1 week
+  rules:
+    - if: $CI_COMMIT_BRANCH == "develop"
+      when: manual
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+      when: on_success
+
+# Staging Deployment
+deploy:staging:
+  stage: deploy-staging
+  image: gitlab-cicd:latest
+  environment:
+    name: staging
+    url: http://staging.poc2.local
+  variables:
+    ENVIRONMENT: "staging"
+    NETBOX_URL: "http://netbox-staging:8000"
+    N8N_URL: "http://n8n-staging:5678"
+  script:
+    - /app/scripts/pipeline-orchestrator.sh backup
+    - /app/scripts/pipeline-orchestrator.sh deploy
+  artifacts:
+    paths:
+      - reports/
+      - backups/
+      - logs/
+    expire_in: 1 month
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+      when: manual
+    - if: $CI_COMMIT_TAG
+      when: on_success
+
+# Production Deployment
+deploy:production:
+  stage: deploy-prod
+  image: gitlab-cicd:latest
+  environment:
+    name: production
+    url: http://prod.poc2.local
+  variables:
+    ENVIRONMENT: "production"
+    NETBOX_URL: "http://netbox-prod:8000"
+    N8N_URL: "http://n8n-prod:5678"
+  script:
+    - echo "Deploying to production environment..."
+    - /app/scripts/pipeline-orchestrator.sh backup
+    - /app/scripts/pipeline-orchestrator.sh deploy
+    - echo "Production deployment completed"
+  artifacts:
+    paths:
+      - reports/
+      - backups/
+      - logs/
+    expire_in: 6 months
+  rules:
+    - if: $CI_COMMIT_TAG
+      when: manual
+  only:
+    - tags
+
+# Post-deployment verification
+verify:production:
+  stage: deploy-prod
+  image: gitlab-cicd:latest
+  environment:
+    name: production
+  variables:
+    ENVIRONMENT: "production"
+    NETBOX_URL: "http://netbox-prod:8000"
+    N8N_URL: "http://n8n-prod:5678"
+  script:
+    - echo "Running production verification tests..."
+    - sleep 30  # Wait for services to stabilize
+    - /app/scripts/pipeline-orchestrator.sh health
+    - /app/scripts/n8n-integration.sh execute "Production Health Check"
+  artifacts:
+    reports:
+      junit: reports/verification.xml
+    paths:
+      - reports/
+    expire_in: 1 month
+  rules:
+    - if: $CI_COMMIT_TAG
+      when: on_success
+  only:
+    - tags
+  needs:
+    - deploy:production
+
+# Cleanup Stage
+cleanup:old-artifacts:
+  stage: cleanup
+  image: gitlab-cicd:latest
+  script:
+    - /app/scripts/pipeline-orchestrator.sh cleanup
+    - echo "Cleanup completed"
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "schedule"
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+      when: always
+  allow_failure: true
+
+# Scheduled backup job
+backup:scheduled:
+  stage: cleanup
+  image: gitlab-cicd:latest
+  environment:
+    name: production
+  variables:
+    ENVIRONMENT: "production"
+    NETBOX_URL: "http://netbox-prod:8000"
+    N8N_URL: "http://n8n-prod:5678"
+  script:
+    - echo "Running scheduled backup..."
+    - /app/scripts/pipeline-orchestrator.sh backup
+  artifacts:
+    paths:
+      - backups/
+    expire_in: 6 months
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "schedule"
+  only:
+    variables:
+      - $BACKUP_SCHEDULE == "true"
+
+# Manual rollback job
+rollback:production:
+  stage: deploy-prod
+  image: gitlab-cicd:latest
+  environment:
+    name: production
+  variables:
+    ENVIRONMENT: "production"
+  script:
+    - echo "Rolling back production deployment..."
+    - |
+      if [ -z "$ROLLBACK_VERSION" ]; then
+        echo "Error: ROLLBACK_VERSION variable is required"
+        exit 1
+      fi
+    - echo "Rolling back to version: $ROLLBACK_VERSION"
+    # Add rollback logic here
+    - echo "Rollback completed"
+  rules:
+    - if: $CI_COMMIT_TAG
+      when: manual
+  only:
+    variables:
+      - $ROLLBACK_VERSION
+  allow_failure: false
+
+# Global after_script
+after_script:
+  - echo "Pipeline stage completed: $CI_JOB_STAGE"
+  - echo "Job status: $CI_JOB_STATUS"
+  - |
+    if [ "$CI_JOB_STATUS" == "failed" ] && [ -n "$SLACK_WEBHOOK_URL" ]; then
+      curl -X POST -H 'Content-type: application/json' \
+        --data "{\"text\":\"🚨 Pipeline failed in $CI_PROJECT_NAME at stage: $CI_JOB_STAGE (Commit: $CI_COMMIT_SHORT_SHA)\"}" \
+        "$SLACK_WEBHOOK_URL" || true
+    fi

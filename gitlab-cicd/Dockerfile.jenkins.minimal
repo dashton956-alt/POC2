@@ -1,0 +1,47 @@
+FROM jenkins/jenkins:2.426.1-lts
+
+# Switch to root for installations
+USER root
+
+# Update and install essential packages only
+RUN apt-get update && \
+    apt-get install -y \
+        curl \
+        wget \
+        git \
+        python3 \
+        python3-pip \
+        && rm -rf /var/lib/apt/lists/*
+
+# Install minimal Python packages needed for our scripts (using system packages)
+RUN apt-get update && apt-get install -y python3-requests python3-yaml || \
+    (pip3 install --break-system-packages requests PyYAML)
+
+# Install Docker CLI (minimal)
+RUN curl -fsSL https://get.docker.com | sh
+
+# Create directories for scripts
+RUN mkdir -p /opt/ci-scripts
+
+# Copy our scripts
+COPY scripts/ /opt/ci-scripts/
+RUN chmod +x /opt/ci-scripts/*.sh && \
+    chown -R jenkins:jenkins /opt/ci-scripts
+
+# Add jenkins to docker group
+RUN usermod -aG docker jenkins
+
+# Install basic Jenkins plugins
+RUN jenkins-plugin-cli --plugins \
+    workflow-aggregator:latest \
+    git:latest \
+    docker-workflow:latest \
+    configuration-as-code:latest
+
+# Switch back to jenkins user
+USER jenkins
+
+# Set Jenkins to skip setup wizard
+ENV JAVA_OPTS="-Djenkins.install.runSetupWizard=false"
+
+EXPOSE 8080

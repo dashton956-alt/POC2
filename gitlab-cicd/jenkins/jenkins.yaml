@@ -1,0 +1,191 @@
+jenkins:
+  systemMessage: "POC2 Automation CI/CD Server"
+  numExecutors: 2
+  mode: NORMAL
+  scmCheckoutRetryCount: 3
+  
+  securityRealm:
+    local:
+      allowsSignup: false
+      users:
+        - id: "admin"
+          password: "${JENKINS_ADMIN_PASSWORD:-admin123}"
+          
+  authorizationStrategy:
+    globalMatrix:
+      permissions:
+        - "Overall/Administer:admin"
+        - "Overall/Read:authenticated"
+
+  remotingSecurity:
+    enabled: true
+
+  globalNodeProperties:
+    - envVars:
+        env:
+          - key: "NETBOX_URL"
+            value: "${NETBOX_URL:-http://netbox:8000}"
+          - key: "N8N_URL" 
+            value: "${N8N_URL:-http://n8n:5678}"
+          - key: "ENVIRONMENT"
+            value: "${ENVIRONMENT:-development}"
+
+credentials:
+  system:
+    domainCredentials:
+      - credentials:
+          - string:
+              scope: GLOBAL
+              id: "netbox-token"
+              secret: "${NETBOX_TOKEN}"
+              description: "NetBox API Token"
+          - string:
+              scope: GLOBAL
+              id: "n8n-api-key"
+              secret: "${N8N_API_KEY}"
+              description: "n8n API Key"
+          - usernamePassword:
+              scope: GLOBAL
+              id: "docker-registry"
+              username: "${DOCKER_REGISTRY_USER}"
+              password: "${DOCKER_REGISTRY_PASSWORD}"
+              description: "Docker Registry Credentials"
+
+jobs:
+  - script: |
+      multibranchPipelineJob('poc2-automation') {
+          displayName('POC2 NetBox/n8n Automation Pipeline')
+          description('Automated CI/CD pipeline for NetBox and n8n integration')
+          
+          branchSources {
+              git {
+                  remote('${GIT_REPO_URL:-https://github.com/dashton956-alt/POC2.git}')
+                  credentialsId('github-credentials')
+              }
+          }
+          
+          factory {
+              workflowBranchProjectFactory {
+                  scriptPath('Jenkinsfile')
+              }
+          }
+          
+          triggers {
+              periodicFolderTrigger {
+                  interval('1h')
+              }
+          }
+          
+          orphanedItemStrategy {
+              discardOldItems {
+                  daysToKeep(7)
+                  numToKeep(10)
+              }
+          }
+      }
+      
+  - script: |
+      pipelineJob('netbox-health-check') {
+          displayName('NetBox Health Check')
+          description('Regular health check for NetBox services')
+          
+          definition {
+              cps {
+                  script('''
+                      pipeline {
+                          agent any
+                          triggers {
+                              cron('H/15 * * * *')  // Every 15 minutes
+                          }
+                          stages {
+                              stage('Health Check') {
+                                  steps {
+                                      script {
+                                          sh '/opt/ci-scripts/netbox-integration.sh test'
+                                      }
+                                  }
+                              }
+                          }
+                          post {
+                              failure {
+                                  emailext (
+                                      subject: "NetBox Health Check Failed",
+                                      body: "NetBox health check failed. Please investigate.",
+                                      recipientProviders: [developers()]
+                                  )
+                              }
+                          }
+                      }
+                  ''')
+                  sandbox(true)
+              }
+          }
+      }
+      
+  - script: |
+      pipelineJob('n8n-health-check') {
+          displayName('n8n Health Check')
+          description('Regular health check for n8n services')
+          
+          definition {
+              cps {
+                  script('''
+                      pipeline {
+                          agent any
+                          triggers {
+                              cron('H/15 * * * *')  // Every 15 minutes
+                          }
+                          stages {
+                              stage('Health Check') {
+                                  steps {
+                                      script {
+                                          sh '/opt/ci-scripts/n8n-integration.sh test'
+                                      }
+                                  }
+                              }
+                          }
+                          post {
+                              failure {
+                                  emailext (
+                                      subject: "n8n Health Check Failed",
+                                      body: "n8n health check failed. Please investigate.",
+                                      recipientProviders: [developers()]
+                                  )
+                              }
+                          }
+                      }
+                  ''')
+                  sandbox(true)
+              }
+          }
+      }
+
+tool:
+  git:
+    installations:
+      - name: "Default"
+        home: "/usr/bin/git"
+  nodejs:
+    installations:
+      - name: "NodeJS-18"
+        home: "/usr/bin/node"
+  terraform:
+    installations:
+      - name: "Terraform"
+        home: "/usr/bin/terraform"
+
+unclassified:
+  location:
+    adminAddress: "admin@poc2.local"
+    url: "http://jenkins:8080/"
+    
+  email-ext:
+    defaultSuffix: "@poc2.local"
+    smtpHost: "${SMTP_HOST:-localhost}"
+    smtpPort: "${SMTP_PORT:-25}"
+    
+  buildStepOperation:
+    enabled: false
+    
+  timestamper:
+    allPipelines: true

@@ -1,0 +1,122 @@
+FROM jenkins/jenkins:2.426.1-lts
+
+# Switch to root to install additional packages
+USER root
+
+# Update package lists and install basic dependencies
+RUN apt-get update && apt-get install -y \
+    apt-transport-https \
+    ca-certificates \
+    curl \
+    gnupg \
+    lsb-release \
+    wget \
+    git \
+    jq \
+    python3 \
+    python3-pip \
+    python3-venv \
+    python3-dev \
+    build-essential \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install database clients
+RUN apt-get update && apt-get install -y \
+    postgresql-client \
+    redis-tools \
+    default-mysql-client \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install network and utility tools
+RUN apt-get update && apt-get install -y \
+    dnsutils \
+    netcat-openbsd \
+    openssh-client \
+    iputils-ping \
+    telnet \
+    vim \
+    nano \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Docker CLI
+RUN curl -fsSL https://download.docker.com/linux/debian/gpg | gpg --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg && \
+    echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] https://download.docker.com/linux/debian $(lsb_release -cs) stable" | tee /etc/apt/sources.list.d/docker.list > /dev/null && \
+    apt-get update && \
+    apt-get install -y docker-ce-cli && \
+    rm -rf /var/lib/apt/lists/*
+
+# Install Node.js 18 LTS
+RUN curl -fsSL https://deb.nodesource.com/setup_18.x | bash - && \
+    apt-get install -y nodejs
+
+# Install Ansible
+RUN python3 -m pip install --no-warn-script-location ansible ansible-core
+
+# Install Terraform
+RUN wget -O- https://apt.releases.hashicorp.com/gpg | gpg --dearmor | tee /usr/share/keyrings/hashicorp-archive-keyring.gpg && \
+    echo "deb [signed-by=/usr/share/keyrings/hashicorp-archive-keyring.gpg] https://apt.releases.hashicorp.com $(lsb_release -cs) main" | tee /etc/apt/sources.list.d/hashicorp.list && \
+    apt-get update && apt-get install -y terraform && \
+    rm -rf /var/lib/apt/lists/*
+
+# Install kubectl
+RUN curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl" && \
+    chmod +x kubectl && \
+    mv kubectl /usr/local/bin/
+
+# Install Helm
+RUN curl https://baltocdn.com/helm/signing.asc | gpg --dearmor | tee /usr/share/keyrings/helm.gpg > /dev/null && \
+    echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/helm.gpg] https://baltocdn.com/helm/stable/debian/ all main" | tee /etc/apt/sources.list.d/helm-stable-debian.list && \
+    apt-get update && \
+    apt-get install -y helm && \
+    rm -rf /var/lib/apt/lists/*
+
+# Install Python packages for NetBox and n8n integration
+RUN python3 -m pip install --no-warn-script-location \
+    requests \
+    PyYAML \
+    Jinja2 \
+    psycopg2-binary \
+    redis \
+    netaddr \
+    dnspython
+
+# Install yq for YAML processing
+RUN wget -qO /usr/local/bin/yq https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64 && \
+    chmod +x /usr/local/bin/yq
+
+# Create directories for our scripts and pipelines
+RUN mkdir -p /opt/ci-scripts /opt/pipelines
+
+# Copy our integration scripts
+COPY scripts/ /opt/ci-scripts/
+RUN chmod +x /opt/ci-scripts/*.sh
+
+# Copy Jenkins pipeline definitions
+COPY jenkins/ /opt/pipelines/
+
+# Install Jenkins plugins
+COPY jenkins/plugins.txt /usr/share/jenkins/ref/plugins.txt
+RUN jenkins-plugin-cli --plugin-file /usr/share/jenkins/ref/plugins.txt
+
+# Copy Jenkins configuration
+COPY jenkins/jenkins.yaml /var/jenkins_home/casc_configs/jenkins.yaml
+
+# Set permissions
+RUN chown -R jenkins:jenkins /opt/ci-scripts /opt/pipelines
+
+# Add jenkins user to docker group (for Docker socket access)
+RUN groupadd -g 999 docker && usermod -aG docker jenkins
+
+# Switch back to jenkins user
+USER jenkins
+
+# Set environment variables
+ENV JAVA_OPTS="-Djenkins.install.runSetupWizard=false -Dcasc.jenkins.config=/var/jenkins_home/casc_configs"
+ENV CASC_JENKINS_CONFIG=/var/jenkins_home/casc_configs
+
+# Expose Jenkins port
+EXPOSE 8080
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
+    CMD curl -f http://localhost:8080/login || exit 1

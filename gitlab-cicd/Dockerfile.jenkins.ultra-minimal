@@ -1,0 +1,41 @@
+FROM jenkins/jenkins:2.426.1-lts
+
+# Switch to root user to install packages
+USER root
+
+# Install essential packages only
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+        curl \
+        wget \
+        git \
+        python3 \
+        python3-pip \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Docker CLI (minimal)
+RUN curl -fsSL https://get.docker.com | sh && \
+    usermod -aG docker jenkins
+
+# Copy Jenkins configuration files
+COPY jenkins/plugins.txt /usr/share/jenkins/ref/plugins.txt
+COPY jenkins/jenkins.yaml /usr/share/jenkins/ref/jenkins.yaml
+
+# Install plugins
+RUN jenkins-plugin-cli --plugin-file /usr/share/jenkins/ref/plugins.txt
+
+# Copy automation scripts (these don't require Python packages)
+COPY scripts/ /home/jenkins/scripts/
+RUN chown -R jenkins:jenkins /home/jenkins/scripts/
+
+# Copy environment files
+COPY .env* /home/jenkins/
+RUN chown jenkins:jenkins /home/jenkins/.env* || true
+
+# Switch back to jenkins user
+USER jenkins
+
+# Set Jenkins configuration
+ENV CASC_JENKINS_CONFIG=/usr/share/jenkins/ref/jenkins.yaml
+ENV JENKINS_OPTS="--httpPort=8080"
+ENV JAVA_OPTS="-Djenkins.install.runSetupWizard=false"
