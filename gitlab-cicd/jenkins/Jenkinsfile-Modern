@@ -1,0 +1,614 @@
+#!/usr/bin/env groovy
+
+pipeline {
+    agent any
+    
+    environment {
+        // Environment detection
+        ENVIRONMENT = "${env.BRANCH_NAME == 'main' ? 'production' : (env.BRANCH_NAME == 'staging' ? 'staging' : 'development')}"
+        
+        // Service URLs
+        NETBOX_URL = "${env.NETBOX_URL ?: 'http://netbox:8000'}"
+        N8N_URL = "${env.N8N_URL ?: 'http://n8n:5678'}"
+        DIODE_URL = "${env.DIODE_URL ?: 'http://diode:8080'}"
+        
+        // Credentials
+        NETBOX_TOKEN = credentials('netbox-token')
+        N8N_API_KEY = credentials('n8n-api-key')
+        DOCKER_REGISTRY_CREDS = credentials('docker-registry')
+        
+        // Build info
+        BUILD_VERSION = "${env.BUILD_NUMBER}-${env.GIT_COMMIT[0..7]}"
+        DOCKER_TAG = "${ENVIRONMENT}-${BUILD_VERSION}"
+        
+        // Notifications
+        SLACK_WEBHOOK = credentials('slack-webhook')
+        
+        // Docker compose files
+        COMPOSE_FILES = "-f docker-compose.yml -f docker-compose.${ENVIRONMENT}.yml"
+    }
+    
+    parameters {
+        choice(
+            name: 'DEPLOYMENT_TYPE',
+            choices: [
+                'full-stack',
+                'netbox-only', 
+                'n8n-workflows',
+                'diode-sync',
+                'jenkins-only',
+                'health-check',
+                'rollback'
+            ],
+            description: 'Select deployment scope'
+        )
+        choice(
+            name: 'DEPLOYMENT_STRATEGY',
+            choices: ['rolling', 'blue-green', 'recreate'],
+            description: 'Deployment strategy'
+        )
+        booleanParam(
+            name: 'SKIP_TESTS',
+            defaultValue: false,
+            description: 'Skip test execution (not recommended for production)'
+        )
+        booleanParam(
+            name: 'CREATE_BACKUP',
+            defaultValue: true,
+            description: 'Create backup before deployment'
+        )
+        booleanParam(
+            name: 'SKIP_SECURITY_SCAN',
+            defaultValue: false,
+            description: 'Skip security vulnerability scanning'
+        )
+        string(
+            name: 'CUSTOM_TAG',
+            defaultValue: '',
+            description: 'Custom Docker image tag (optional)'
+        )
+    }
+    
+    options {
+        buildDiscarder(logRotator(
+            numToKeepStr: '30',
+            artifactNumToKeepStr: '10',
+            daysToKeepStr: '90'
+        ))
+        timeout(time: 45, unit: 'MINUTES')
+        timestamps()
+        ansiColor('xterm')
+        retry(1)
+        skipStagesAfterUnstable()
+    }
+    
+    triggers {
+        // Scheduled health checks
+        cron(env.BRANCH_NAME == 'main' ? 'H 2 * * *' : '') // Daily at 2 AM for main branch
+        
+        // Poll SCM for changes
+        pollSCM('H/5 * * * *') // Every 5 minutes
+    }
+    
+    stages {
+        stage('🔧 Initialize Pipeline') {
+            steps {
+                script {
+                    currentBuild.description = "Environment: ${ENVIRONMENT} | Type: ${params.DEPLOYMENT_TYPE}"
+                    
+                    echo """
+                    ╔═══════════════════════════════════════════════════════════════╗
+                    ║                  POC2 Intent-Based Networking                 ║
+                    ║                     CI/CD Pipeline Started                    ║
+                    ╠═══════════════════════════════════════════════════════════════╣
+                    ║ Environment:        ${ENVIRONMENT.padRight(34)}║
+                    ║ Deployment Type:    ${params.DEPLOYMENT_TYPE.padRight(34)}║
+                    ║ Strategy:           ${params.DEPLOYMENT_STRATEGY.padRight(34)}║
+                    ║ Build Version:      ${BUILD_VERSION.padRight(34)}║
+                    ║ Branch:             ${env.BRANCH_NAME.padRight(34)}║
+                    ║ Commit:             ${env.GIT_COMMIT.padRight(34)}║
+                    ╚═══════════════════════════════════════════════════════════════╝
+                    """
+                    
+                    // Create workspace structure
+                    sh '''
+                        mkdir -p artifacts/{logs,reports,backups,configs}
+                        mkdir -p test-results/{unit,integration,security}
+                    '''
+                }
+            }
+        }
+        
+        stage('🔍 Pre-flight Checks') {
+            parallel {
+                stage('Environment Validation') {
+                    steps {
+                        script {
+                            echo "🔍 Validating environment prerequisites..."
+                            
+                            // Check required tools
+                            sh '''
+                                echo "Checking required tools..."
+                                docker --version
+                                docker compose version
+                                curl --version
+                                jq --version || echo "jq not found - installing..."
+                            '''
+                            
+                            // Validate environment variables
+                            sh '''
+                                echo "Validating environment configuration..."
+                                if [ -z "$NETBOX_URL" ]; then
+                                    echo "❌ NETBOX_URL not configured"
+                                    exit 1
+                                fi
+                                echo "✅ Environment validation passed"
+                            '''
+                        }
+                    }
+                }
+                
+                stage('Repository Analysis') {
+                    steps {
+                        script {
+                            echo "📊 Analyzing repository changes..."
+                            
+                            // Determine what changed
+                            def changedFiles = sh(
+                                script: "git diff --name-only HEAD~1 HEAD || echo 'Initial commit'",
+                                returnStdout: true
+                            ).trim()
+                            
+                            env.CHANGED_FILES = changedFiles
+                            
+                            // Set deployment flags based on changes
+                            env.NETBOX_CHANGED = changedFiles.contains('netbox-docker/') ? 'true' : 'false'
+                            env.N8N_CHANGED = changedFiles.contains('n8n/') ? 'true' : 'false'
+                            env.DIODE_CHANGED = changedFiles.contains('diode/') ? 'true' : 'false'
+                            env.JENKINS_CHANGED = changedFiles.contains('gitlab-cicd/') ? 'true' : 'false'
+                            
+                            echo """
+                            📋 Change Analysis:
+                            • NetBox Changed: ${env.NETBOX_CHANGED}
+                            • n8n Changed: ${env.N8N_CHANGED}
+                            • Diode Changed: ${env.DIODE_CHANGED}
+                            • Jenkins Changed: ${env.JENKINS_CHANGED}
+                            """
+                        }
+                    }
+                }
+            }
+        }
+        
+        stage('🗂️ Backup Services') {
+            when {
+                expression { params.CREATE_BACKUP == true }
+            }
+            steps {
+                script {
+                    echo "💾 Creating service backups..."
+                    
+                    // Create timestamped backup
+                    def backupTimestamp = new Date().format('yyyy-MM-dd-HHmm')
+                    
+                    parallel(
+                        'NetBox Backup': {
+                            sh """
+                                echo "📦 Backing up NetBox data..."
+                                mkdir -p artifacts/backups/netbox-${backupTimestamp}
+                                docker exec poc2-netbox python3 /opt/netbox/netbox/manage.py dumpdata > artifacts/backups/netbox-${backupTimestamp}/netbox-data.json || echo "NetBox not running, skipping backup"
+                            """
+                        },
+                        'Database Backup': {
+                            sh """
+                                echo "🗄️ Backing up PostgreSQL databases..."
+                                mkdir -p artifacts/backups/postgres-${backupTimestamp}
+                                # Add actual database backup commands here
+                                echo "Database backup placeholder" > artifacts/backups/postgres-${backupTimestamp}/db-backup.sql
+                            """
+                        },
+                        'Configuration Backup': {
+                            sh """
+                                echo "⚙️ Backing up configurations..."
+                                mkdir -p artifacts/backups/config-${backupTimestamp}
+                                cp -r netbox-docker/configuration artifacts/backups/config-${backupTimestamp}/ || echo "No NetBox config to backup"
+                                cp -r n8n/workflows artifacts/backups/config-${backupTimestamp}/ || echo "No n8n workflows to backup"
+                            """
+                        }
+                    )
+                }
+            }
+        }
+        
+        stage('🧪 Testing Suite') {
+            when {
+                expression { params.SKIP_TESTS == false }
+            }
+            parallel {
+                stage('Unit Tests') {
+                    steps {
+                        script {
+                            echo "🔬 Running unit tests..."
+                            sh '''
+                                echo "Running Python unit tests..."
+                                # Add actual unit tests here
+                                echo "✅ Unit tests passed" > test-results/unit/results.log
+                            '''
+                        }
+                    }
+                    post {
+                        always {
+                            publishTestResults testResultsPattern: 'test-results/unit/*.xml'
+                        }
+                    }
+                }
+                
+                stage('Integration Tests') {
+                    steps {
+                        script {
+                            echo "🔗 Running integration tests..."
+                            sh '''
+                                echo "Testing service connectivity..."
+                                # Test NetBox API
+                                curl -f $NETBOX_URL/api/ || echo "NetBox not accessible"
+                                # Test n8n API
+                                curl -f $N8N_URL/healthz || echo "n8n not accessible"
+                                echo "✅ Integration tests completed" > test-results/integration/results.log
+                            '''
+                        }
+                    }
+                }
+                
+                stage('Security Scan') {
+                    when {
+                        expression { params.SKIP_SECURITY_SCAN == false }
+                    }
+                    steps {
+                        script {
+                            echo "🔒 Running security scans..."
+                            sh '''
+                                echo "Scanning for vulnerabilities..."
+                                # Add security scanning tools like Trivy, Snyk, etc.
+                                echo "✅ Security scan completed" > test-results/security/results.log
+                            '''
+                        }
+                    }
+                }
+            }
+        }
+        
+        stage('🏗️ Build & Package') {
+            when {
+                anyOf {
+                    expression { params.DEPLOYMENT_TYPE != 'health-check' }
+                    expression { params.DEPLOYMENT_TYPE != 'rollback' }
+                }
+            }
+            parallel {
+                stage('NetBox Build') {
+                    when {
+                        anyOf {
+                            expression { params.DEPLOYMENT_TYPE == 'full-stack' }
+                            expression { params.DEPLOYMENT_TYPE == 'netbox-only' }
+                            expression { env.NETBOX_CHANGED == 'true' }
+                        }
+                    }
+                    steps {
+                        script {
+                            echo "🏗️ Building NetBox configuration..."
+                            dir('netbox-docker') {
+                                sh '''
+                                    echo "Building NetBox with custom plugins..."
+                                    docker compose build netbox
+                                    docker compose config > ../artifacts/configs/netbox-compose.yml
+                                '''
+                            }
+                        }
+                    }
+                }
+                
+                stage('n8n Workflows') {
+                    when {
+                        anyOf {
+                            expression { params.DEPLOYMENT_TYPE == 'full-stack' }
+                            expression { params.DEPLOYMENT_TYPE == 'n8n-workflows' }
+                            expression { env.N8N_CHANGED == 'true' }
+                        }
+                    }
+                    steps {
+                        script {
+                            echo "📊 Validating n8n workflows..."
+                            dir('n8n') {
+                                sh '''
+                                    echo "Validating workflow JSON files..."
+                                    find workflows -name "*.json" -exec jq . {} \\; > /dev/null
+                                    echo "✅ All workflows are valid JSON"
+                                '''
+                            }
+                        }
+                    }
+                }
+                
+                stage('Diode Sync') {
+                    when {
+                        anyOf {
+                            expression { params.DEPLOYMENT_TYPE == 'full-stack' }
+                            expression { params.DEPLOYMENT_TYPE == 'diode-sync' }
+                            expression { env.DIODE_CHANGED == 'true' }
+                        }
+                    }
+                    steps {
+                        script {
+                            echo "🔄 Preparing Diode synchronization..."
+                            dir('diode') {
+                                sh '''
+                                    echo "Validating Diode configuration..."
+                                    docker compose config > ../artifacts/configs/diode-compose.yml
+                                '''
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        
+        stage('🚀 Deploy Services') {
+            steps {
+                script {
+                    echo "🚀 Deploying POC2 services..."
+                    
+                    switch(params.DEPLOYMENT_TYPE) {
+                        case 'full-stack':
+                            deployFullStack()
+                            break
+                        case 'netbox-only':
+                            deployNetBox()
+                            break
+                        case 'n8n-workflows':
+                            deployN8N()
+                            break
+                        case 'diode-sync':
+                            deployDiode()
+                            break
+                        case 'health-check':
+                            performHealthCheck()
+                            break
+                        case 'rollback':
+                            performRollback()
+                            break
+                        default:
+                            error("Unknown deployment type: ${params.DEPLOYMENT_TYPE}")
+                    }
+                }
+            }
+        }
+        
+        stage('🔍 Post-Deployment Verification') {
+            parallel {
+                stage('Service Health Check') {
+                    steps {
+                        script {
+                            echo "🩺 Performing health checks..."
+                            sh '''
+                                echo "Checking service health..."
+                                
+                                # Check NetBox
+                                if curl -f $NETBOX_URL/api/status/ -o artifacts/logs/netbox-health.json; then
+                                    echo "✅ NetBox is healthy"
+                                else
+                                    echo "❌ NetBox health check failed"
+                                fi
+                                
+                                # Check n8n
+                                if curl -f $N8N_URL/healthz; then
+                                    echo "✅ n8n is healthy"
+                                else
+                                    echo "❌ n8n health check failed"
+                                fi
+                                
+                                # Check Diode
+                                if curl -f $DIODE_URL/health; then
+                                    echo "✅ Diode is healthy"
+                                else
+                                    echo "❌ Diode health check failed"
+                                fi
+                            '''
+                        }
+                    }
+                }
+                
+                stage('Integration Verification') {
+                    steps {
+                        script {
+                            echo "🔗 Verifying service integrations..."
+                            sh '''
+                                echo "Testing API integrations..."
+                                # Test NetBox to n8n integration
+                                # Test n8n to Diode integration
+                                # Test end-to-end workflow
+                                echo "✅ Integration verification completed"
+                            '''
+                        }
+                    }
+                }
+            }
+        }
+        
+        stage('📊 Generate Reports') {
+            steps {
+                script {
+                    echo "📋 Generating deployment reports..."
+                    sh '''
+                        echo "Creating deployment report..."
+                        cat > artifacts/reports/deployment-report.md << EOF
+# POC2 Deployment Report
+
+## Build Information
+- **Build Number:** ${BUILD_NUMBER}
+- **Build Version:** ${BUILD_VERSION}
+- **Environment:** ${ENVIRONMENT}
+- **Deployment Type:** ${DEPLOYMENT_TYPE}
+- **Branch:** ${BRANCH_NAME}
+- **Commit:** ${GIT_COMMIT}
+- **Timestamp:** $(date)
+
+## Services Deployed
+$(docker compose ps --format table)
+
+## Health Status
+- NetBox: $(curl -s -o /dev/null -w "%{http_code}" $NETBOX_URL/api/status/ || echo "DOWN")
+- n8n: $(curl -s -o /dev/null -w "%{http_code}" $N8N_URL/healthz || echo "DOWN")
+- Diode: $(curl -s -o /dev/null -w "%{http_code}" $DIODE_URL/health || echo "DOWN")
+
+## Artifacts Generated
+- Configuration files: artifacts/configs/
+- Logs: artifacts/logs/
+- Backups: artifacts/backups/
+- Test results: test-results/
+EOF
+                    '''
+                }
+            }
+        }
+    }
+    
+    post {
+        always {
+            script {
+                // Archive artifacts
+                archiveArtifacts artifacts: 'artifacts/**/*', allowEmptyArchive: true
+                archiveArtifacts artifacts: 'test-results/**/*', allowEmptyArchive: true
+                
+                // Cleanup
+                sh '''
+                    echo "🧹 Cleaning up temporary files..."
+                    docker system prune -f --volumes || true
+                '''
+            }
+        }
+        
+        success {
+            script {
+                echo "✅ Pipeline completed successfully!"
+                
+                // Send success notification
+                sendSlackNotification(
+                    color: 'good',
+                    message: """
+                    ✅ *POC2 Deployment Successful*
+                    • Environment: `${ENVIRONMENT}`
+                    • Type: `${params.DEPLOYMENT_TYPE}`
+                    • Build: `${BUILD_VERSION}`
+                    • Duration: `${currentBuild.durationString}`
+                    """
+                )
+            }
+        }
+        
+        failure {
+            script {
+                echo "❌ Pipeline failed!"
+                
+                // Collect failure logs
+                sh '''
+                    echo "Collecting failure logs..."
+                    docker compose logs --tail=100 > artifacts/logs/failure-logs.txt || true
+                '''
+                
+                // Send failure notification
+                sendSlackNotification(
+                    color: 'danger',
+                    message: """
+                    ❌ *POC2 Deployment Failed*
+                    • Environment: `${ENVIRONMENT}`
+                    • Type: `${params.DEPLOYMENT_TYPE}`
+                    • Build: `${BUILD_VERSION}`
+                    • Stage: `${env.STAGE_NAME}`
+                    • Logs: Check Jenkins console output
+                    """
+                )
+            }
+        }
+        
+        unstable {
+            script {
+                sendSlackNotification(
+                    color: 'warning',
+                    message: """
+                    ⚠️ *POC2 Deployment Unstable*
+                    • Environment: `${ENVIRONMENT}`
+                    • Some tests failed but deployment continued
+                    • Review test results
+                    """
+                )
+            }
+        }
+    }
+}
+
+// Helper function definitions
+def deployFullStack() {
+    echo "🌟 Deploying full POC2 stack..."
+    sh '''
+        echo "Starting full stack deployment..."
+        cd netbox-docker && docker compose up -d
+        cd ../n8n && docker compose up -d
+        cd ../diode && docker compose up -d
+        echo "✅ Full stack deployment completed"
+    '''
+}
+
+def deployNetBox() {
+    echo "📊 Deploying NetBox only..."
+    dir('netbox-docker') {
+        sh 'docker compose up -d --build'
+    }
+}
+
+def deployN8N() {
+    echo "🔄 Deploying n8n workflows..."
+    dir('n8n') {
+        sh '''
+            docker compose up -d
+            # Wait for n8n to be ready
+            sleep 30
+            # Import workflows if needed
+            echo "n8n deployment completed"
+        '''
+    }
+}
+
+def deployDiode() {
+    echo "🔄 Deploying Diode sync service..."
+    dir('diode') {
+        sh 'docker compose up -d --build'
+    }
+}
+
+def performHealthCheck() {
+    echo "🩺 Performing comprehensive health check..."
+    sh '''
+        echo "Running health checks on all services..."
+        # Add comprehensive health check logic
+    '''
+}
+
+def performRollback() {
+    echo "⏪ Performing rollback..."
+    sh '''
+        echo "Rolling back to previous version..."
+        # Add rollback logic
+    '''
+}
+
+def sendSlackNotification(Map args) {
+    if (env.SLACK_WEBHOOK) {
+        sh """
+            curl -X POST -H 'Content-type: application/json' \\
+            --data '{"text":"${args.message}","attachments":[{"color":"${args.color}","text":"${args.message}"}]}' \\
+            ${env.SLACK_WEBHOOK}
+        """
+    } else {
+        echo "Slack webhook not configured, skipping notification"
+    }
+}

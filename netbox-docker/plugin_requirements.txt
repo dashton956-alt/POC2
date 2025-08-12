@@ -5,4 +5,11 @@ netbox-validity
 netbox-routing
 netbox-config-diff
 netboxlabs-diode-netbox-plugin
+netbox-better-templates
+netbox-firmware
+netbox-ping
+netbox-docker-plugin
+netbox-reorder-rack
+netbox-acls
+netbox-floorplan-plugin
 netboxlabs-netbox-branching

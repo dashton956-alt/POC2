@@ -36,12 +36,37 @@ ENVIRONMENT="${CI_ENVIRONMENT_NAME:-${ENVIRONMENT:-development}}"
 PIPELINE_STAGE="${CI_JOB_STAGE:-test}"
 PROJECT_NAME="${CI_PROJECT_NAME:-${PROJECT_NAME:-poc2-automation}}"
 
-# Colors for output
+#!/bin/bash
+
+# POC2 Pipeline Orchestrator
+# Comprehensive CI/CD automation for Intent-Based Networking platform
+
+set -euo pipefail
+
+# Color codes for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
+PURPLE='\033[0;35m'
+CYAN='\033[0;36m'
 NC='\033[0m' # No Color
+
+# Configuration
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
+TIMESTAMP=$(date '+%Y%m%d-%H%M%S')
+LOG_DIR="${PROJECT_ROOT}/artifacts/logs"
+BACKUP_DIR="${PROJECT_ROOT}/artifacts/backups"
+
+# Service URLs
+NETBOX_URL="${NETBOX_URL:-http://localhost:8000}"
+N8N_URL="${N8N_URL:-http://localhost:5678}"
+DIODE_URL="${DIODE_URL:-http://localhost:8080}"
+JENKINS_URL="${JENKINS_URL:-http://localhost:8090}"
+
+# Create required directories
+mkdir -p "${LOG_DIR}" "${BACKUP_DIR}"
 
 # Logging function
 log() {

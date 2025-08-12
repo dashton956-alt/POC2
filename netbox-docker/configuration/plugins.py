@@ -24,6 +24,13 @@ PLUGINS = ["netbox_secrets",
 "validity",
 "netbox_routing",
 "netbox_diode_plugin",
+"netbox_ping",
+"netbox_firmware",
+"netbox_better_templates",
+"netbox_docker_plugin",
+"netbox_reorder_rack",
+"netbox_floorplan",
+"netbox_acls",
 "netbox_branching"]
 
 

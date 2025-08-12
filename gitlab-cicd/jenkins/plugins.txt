@@ -1,34 +1,64 @@
-# Jenkins plugins for CI/CD pipeline
-workflow-aggregator:596.v8c21c963d92d
-pipeline-stage-view:2.25
-blueocean:1.25.2
-docker-workflow:563.vd5d2e5c4007f
-git:4.8.3
-github:1.37.0
-credentials:2.6.1
-credentials-binding:523.vd859a_4b_122e6
-ssh-credentials:308.ve4497b_ccd8f4
-pipeline-utility-steps:2.13.2
-build-timeout:1.27
-timestamper:1.17
-ws-cleanup:0.42
-ant:435.v7e79b_1b_fdb_07
-gradle:1.39.4
-nodejs:1.5.1
-python:1.3
-ansible:1.1
-terraform:1.0.10
-pipeline-maven:3.10.0
-email-ext:2.93
-slack:631.v40deea_40323b
-configuration-as-code:1512.vb_79d418d5fc8
-job-dsl:1.81
-build-name-setter:2.2.0
-parameterized-trigger:2.45
-copyartifact:1.46.4
-archive-artifacts:1.3
-junit:1.60
-performance:3.20
-htmlpublisher:1.31
-lockable-resources:2.18
-pipeline-milestone-step:100.v60a_03cd446a_1
+# Jenkins plugins for CI/CD pipeline - Recommended Set
+# Core Pipeline Functionality
+workflow-aggregator
+pipeline-stage-view
+blueocean
+pipeline-utility-steps
+
+# Source Control
+git
+github
+multibranch-scan-webhook-trigger
+
+# Docker & Container Support
+docker-workflow
+docker-plugin
+
+# Security & Credentials
+credentials
+credentials-binding
+ssh-credentials
+matrix-auth
+
+# Build Tools
+ant
+gradle
+maven-plugin
+pipeline-maven
+
+# Language Support
+nodejs
+python
+ansible
+
+# Testing & Quality
+junit
+performance
+htmlpublisher
+warnings-ng
+
+# Notifications
+email-ext
+slack
+http_request
+
+# Automation & Configuration
+job-dsl
+configuration-as-code
+parameterized-trigger
+
+# Utilities
+build-timeout
+timestamper
+ws-cleanup
+copyartifact
+lockable-resources
+build-name-setter
+
+# Monitoring
+prometheus
+build-monitor-plugin
+
+# Additional Useful Plugins
+pipeline-milestone-step
+webhook-step
